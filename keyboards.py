@@ -65,16 +65,23 @@ def schedule_nav(
     if nav_row:
         rows.append(nav_row)
 
-    # Quick switch favorites (no manage/toggle here)
-    corp = chat.corpus or "1"
-    favs = [f for f in chat.favorites_for_corpus(corp) if f["id"] != chat.entity_id]
+    # Quick switch: all favorites (any corpus), skip current
+    favs = [
+        f
+        for f in chat.all_favorites()
+        if not (f["id"] == chat.entity_id and f.get("corpus") == (chat.corpus or "1"))
+    ]
     if favs:
-        rows.append(
-            [
-                InlineKeyboardButton(f["name"], callback_data=f"f:{f['id']}")
-                for f in favs[:5]
-            ]
-        )
+        row: list[InlineKeyboardButton] = []
+        for f in favs[:5]:
+            short = config.corpus_meta(f.get("corpus") or "1")["short"]
+            row.append(
+                InlineKeyboardButton(
+                    f"{short} {f['name']}",
+                    callback_data=f"f:{f.get('corpus') or '1'}:{f['id']}",
+                )
+            )
+        rows.append(row)
 
     rows.append(
         [
@@ -102,19 +109,27 @@ def menu_keyboard(chat: Chat) -> InlineKeyboardMarkup:
 
 
 def favorites_keyboard(chat: Chat) -> InlineKeyboardMarkup:
+    favs = chat.all_favorites()
     corp = chat.corpus or "1"
-    favs = chat.favorites_for_corpus(corp)
     rows: list[list[InlineKeyboardButton]] = []
     for f in favs:
+        fcorp = f.get("corpus") or "1"
+        short = config.corpus_meta(fcorp)["short"]
         rows.append(
             [
-                InlineKeyboardButton(f"📅 {f['name']}", callback_data=f"f:{f['id']}"),
-                InlineKeyboardButton("🗑", callback_data=f"xf:{f['id']}"),
+                InlineKeyboardButton(
+                    f"📅 {short} {f['name']}",
+                    callback_data=f"f:{fcorp}:{f['id']}",
+                ),
+                InlineKeyboardButton("🗑", callback_data=f"xf:{fcorp}:{f['id']}"),
             ]
         )
     if chat.entity_id and chat.entity_kind == "group":
-        in_fav = any(f["id"] == chat.entity_id for f in favs)
-        if not in_fav and len(favs) < MAX_FAVORITES:
+        in_fav = any(
+            f["id"] == chat.entity_id and f.get("corpus") == corp for f in favs
+        )
+        same_corp_count = sum(1 for f in favs if f.get("corpus") == corp)
+        if not in_fav and same_corp_count < MAX_FAVORITES:
             rows.append(
                 [
                     InlineKeyboardButton(
@@ -135,6 +150,28 @@ def favorites_keyboard(chat: Chat) -> InlineKeyboardMarkup:
     rows.append([InlineKeyboardButton("👥 Выбрать группу", callback_data="m:pick")])
     rows.append([InlineKeyboardButton("К меню 🔙", callback_data="m:home")])
     return InlineKeyboardMarkup(rows)
+
+
+def admin_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("📊 Статистика", callback_data="a:stats")],
+            [InlineKeyboardButton("📣 Рассылка", callback_data="a:broadcast")],
+            [InlineKeyboardButton("🔄 Обновить сайт", callback_data="a:refresh")],
+            [InlineKeyboardButton("К меню 🔙", callback_data="m:home")],
+        ]
+    )
+
+
+def broadcast_confirm_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("✅ Отправить всем", callback_data="a:bc_send"),
+                InlineKeyboardButton("❌ Отмена", callback_data="a:bc_cancel"),
+            ]
+        ]
+    )
 
 
 def pick_kind_keyboard() -> InlineKeyboardMarkup:

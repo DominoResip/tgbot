@@ -12,6 +12,8 @@ import config
 
 log = logging.getLogger("spt.store")
 
+# Bump when DB init/migration logic changes (visible in startup logs).
+STORE_SCHEMA = 3
 
 DEFAULT_SETTINGS = {
     "show_teacher": True,
@@ -67,11 +69,19 @@ class Chat:
                         "corpus": str(item.get("corpus") or self.corpus or "1"),
                     }
                 )
-        # favorites for current corpus only in UI
-        return out[:MAX_FAVORITES]
+        # keep all favorites; per-corpus limit applied in add_favorite
+        return out
 
     def favorites_for_corpus(self, corpus_id: str) -> list[dict[str, str]]:
         return [f for f in self.favorites() if f.get("corpus") == corpus_id][:MAX_FAVORITES]
+
+    def all_favorites(self) -> list[dict[str, str]]:
+        """Favorites from every corpus (stable order: corpus, name)."""
+        favs = self.favorites()
+        return sorted(
+            favs,
+            key=lambda f: (f.get("corpus") or "1", f.get("name") or "").casefold(),
+        )
 
 
 class Store:
@@ -233,14 +243,17 @@ class Store:
             )
         return chat
 
-    def set_corpus(self, chat_id: int, corpus_id: str) -> Chat:
+    def set_corpus(
+        self, chat_id: int, corpus_id: str, *, clear_entity: bool = True
+    ) -> Chat:
         chat = self.get_chat(chat_id)
         if not chat:
             raise KeyError(chat_id)
         old = chat.corpus
         chat.settings["corpus"] = corpus_id
-        # Switching corpus clears current entity (different lists).
-        if old and old != corpus_id:
+        # Switching corpus clears current entity (different lists), unless caller
+        # will set a new entity immediately (e.g. opening a favorite).
+        if clear_entity and old and old != corpus_id:
             with self._lock, self._connect() as conn:
                 conn.execute(
                     """
@@ -256,6 +269,23 @@ class Store:
             chat.entity_kind = "group"
             return chat
         return self._save_settings(chat)
+
+    def apply_favorite(
+        self, chat_id: int, fav: dict[str, str]
+    ) -> Chat:
+        """Switch corpus (keeping favorites) and select favorite entity."""
+        corpus = str(fav.get("corpus") or "1")
+        self.set_corpus(chat_id, corpus, clear_entity=False)
+        self.set_entity(
+            chat_id,
+            str(fav["id"]),
+            str(fav.get("name") or ""),
+            str(fav.get("kind") or "group"),
+        )
+        chat = self.get_chat(chat_id)
+        if not chat:
+            raise KeyError(chat_id)
+        return chat
 
     def add_favorite(
         self, chat_id: int, entity_id: str, name: str, kind: str = "group",

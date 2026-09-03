@@ -404,6 +404,88 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _send(update, text)
 
 
+async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    if not user or user.id not in config.ADMIN_IDS:
+        if update.message:
+            await update.message.reply_text("Команда только для администратора бота.")
+        return
+    ensure(update)
+    n = store.chat_count()
+    await _send(
+        update,
+        f"🛠 <b>Админка</b>\nЧатов в базе: <b>{n}</b>\nВыберите действие:",
+        markup=kb.admin_keyboard(),
+    )
+
+
+async def cmd_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    if not user or user.id not in config.ADMIN_IDS:
+        if update.message:
+            await update.message.reply_text("Команда только для администратора бота.")
+        return
+    ensure(update)
+    args = (update.message.text or "").split(maxsplit=1) if update.message else []
+    if len(args) > 1 and args[1].strip():
+        context.user_data["broadcast_draft"] = args[1].strip()
+        context.user_data.pop("await_broadcast", None)
+        await _send(
+            update,
+            "📣 <b>Черновик рассылки</b>\n\n"
+            + args[1].strip()
+            + f"\n\nПолучателей: <b>{store.chat_count()}</b>",
+            markup=kb.broadcast_confirm_keyboard(),
+        )
+        return
+    context.user_data["await_broadcast"] = True
+    context.user_data.pop("broadcast_draft", None)
+    await _send(
+        update,
+        "📣 Пришлите текст рассылки одним сообщением.\n"
+        "Можно HTML: <code>&lt;b&gt;жирный&lt;/b&gt;</code>.\n"
+        "Отмена: /admin",
+    )
+
+
+async def _run_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    import asyncio
+
+    from telegram.error import Forbidden, TelegramError
+
+    draft = (context.user_data.get("broadcast_draft") or "").strip()
+    if not draft:
+        await _send(update, "Нет текста для рассылки. /broadcast")
+        return
+    chats = store.all_chats()
+    ok = 0
+    fail = 0
+    await _send(update, f"📣 Рассылка… получателей: {len(chats)}")
+    bot = context.bot
+    for c in chats:
+        try:
+            await bot.send_message(
+                c.chat_id,
+                draft,
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+            )
+            ok += 1
+        except (Forbidden, TelegramError):
+            fail += 1
+        except Exception:
+            fail += 1
+            log.exception("broadcast to %s failed", c.chat_id)
+        await asyncio.sleep(0.05)
+    context.user_data.pop("broadcast_draft", None)
+    context.user_data.pop("await_broadcast", None)
+    await _send(
+        update,
+        f"✅ Рассылка завершена.\nДоставлено: <b>{ok}</b>\nОшибок: <b>{fail}</b>",
+        markup=kb.admin_keyboard(),
+    )
+
+
 async def cmd_refresh(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     if not user or user.id not in config.ADMIN_IDS:
@@ -456,26 +538,87 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if data.startswith("f:"):
         if not await _can_pick(update, context):
             return
-        eid = data[2:]
+        # f:{corpus}:{entity_id} or legacy f:{entity_id}
+        parts = data.split(":", 2)
+        if len(parts) == 3:
+            fcorp, eid = parts[1], parts[2]
+        else:
+            fcorp, eid = chat.corpus or "1", parts[1]
+        fav = next(
+            (
+                f
+                for f in chat.all_favorites()
+                if f["id"] == eid and f.get("corpus") == fcorp
+            ),
+            None,
+        )
+        if fav:
+            store.apply_favorite(chat.chat_id, fav)
+            chat = store.get_chat(chat.chat_id) or chat
+            await show_day(update, context, base_date(chat), edit=True)
+            return
+        # Not in favorites list — try current corpus entity list
+        if fcorp != (chat.corpus or "1"):
+            store.set_corpus(chat.chat_id, fcorp, clear_entity=False)
+            chat = store.get_chat(chat.chat_id) or chat
         svc = svc_for(chat)
         ent = svc.get_entity(eid)
         if not ent:
-            fav = next(
-                (
-                    f
-                    for f in chat.favorites_for_corpus(chat.corpus)
-                    if f["id"] == eid
-                ),
-                None,
-            )
-            if fav:
-                store.set_entity(chat.chat_id, fav["id"], fav["name"], fav["kind"])
-                await show_day(update, context, base_date(chat), edit=True)
-                return
             await _send(update, "Избранная позиция устарела.")
             return
         store.set_entity(chat.chat_id, ent.id, ent.name, ent.kind)
         await show_day(update, context, base_date(chat), edit=True)
+        return
+
+    if data.startswith("a:"):
+        user = update.effective_user
+        if not user or user.id not in config.ADMIN_IDS:
+            await _send(update, "Только для администратора бота.")
+            return
+        action = data[2:]
+        if action == "stats":
+            text = fmt.format_stats(
+                store.all_chats(), archive_rows=store.archive_count()
+            )
+            await _send(update, text, markup=kb.admin_keyboard(), edit=True)
+            return
+        if action == "refresh":
+            try:
+                await hub.refresh_all()
+                parts = [
+                    f"{cid}: {len(svc.entities)} ({svc.updated_label or '—'})"
+                    for cid, svc in hub.services.items()
+                ]
+                await _send(
+                    update,
+                    "Обновлено.\n" + "\n".join(parts),
+                    markup=kb.admin_keyboard(),
+                    edit=True,
+                )
+            except Exception as exc:
+                await _send(update, f"Ошибка: {exc}", markup=kb.admin_keyboard())
+            return
+        if action == "broadcast":
+            context.user_data["await_broadcast"] = True
+            context.user_data.pop("broadcast_draft", None)
+            await _send(
+                update,
+                "📣 Пришлите текст рассылки одним сообщением.\nОтмена: /admin",
+            )
+            return
+        if action == "bc_send":
+            await _run_broadcast(update, context)
+            return
+        if action == "bc_cancel":
+            context.user_data.pop("broadcast_draft", None)
+            context.user_data.pop("await_broadcast", None)
+            await _send(
+                update,
+                "Рассылка отменена.",
+                markup=kb.admin_keyboard(),
+                edit=True,
+            )
+            return
         return
 
     if data == "m:home":
@@ -527,7 +670,13 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if data.startswith("xf:"):
         if not await _can_pick(update, context):
             return
-        store.remove_favorite(chat.chat_id, data[3:], corpus=chat.corpus)
+        # xf:{corpus}:{entity_id} or legacy xf:{entity_id}
+        parts = data.split(":", 2)
+        if len(parts) == 3:
+            fcorp, eid = parts[1], parts[2]
+        else:
+            fcorp, eid = chat.corpus or "1", parts[1]
+        store.remove_favorite(chat.chat_id, eid, corpus=fcorp)
         await open_favorites(update, context)
         return
     if data == "m:pick":
@@ -597,6 +746,24 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     text = update.message.text.strip()
     chat = ensure(update)
+
+    # Admin broadcast draft
+    user = update.effective_user
+    if (
+        user
+        and user.id in config.ADMIN_IDS
+        and context.user_data.get("await_broadcast")
+    ):
+        context.user_data["await_broadcast"] = False
+        context.user_data["broadcast_draft"] = text
+        await _send(
+            update,
+            "📣 <b>Черновик рассылки</b>\n\n"
+            + text
+            + f"\n\nПолучателей: <b>{store.chat_count()}</b>",
+            markup=kb.broadcast_confirm_keyboard(),
+        )
+        return
 
     # Ignore leftover reply-keyboard labels; guide to /menu
     if text in {
@@ -685,7 +852,9 @@ async def on_startup(app: Application) -> None:
                 BotCommand("start", "Запуск"),
                 BotCommand("menu", "Меню"),
                 BotCommand("help", "Справка"),
+                BotCommand("admin", "Админка"),
                 BotCommand("stats", "Статистика (админ)"),
+                BotCommand("broadcast", "Рассылка (админ)"),
             ]
         )
     except Exception:
@@ -729,7 +898,9 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("menu", cmd_menu))
     app.add_handler(CommandHandler("help", cmd_help))
+    app.add_handler(CommandHandler("admin", cmd_admin))
     app.add_handler(CommandHandler("stats", cmd_stats))
+    app.add_handler(CommandHandler("broadcast", cmd_broadcast))
     app.add_handler(CommandHandler("refresh", cmd_refresh))
     app.add_handler(CallbackQueryHandler(on_callback))
     app.add_handler(ChatMemberHandler(on_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))

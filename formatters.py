@@ -5,7 +5,7 @@ from html import escape
 
 import config
 from parser import DaySchedule, Lesson
-from store import Chat
+from store import Chat, MAX_FAVORITES
 
 WEEKDAYS_SHORT = {
     0: "ПН",
@@ -242,8 +242,15 @@ def format_settings(chat: Chat) -> str:
     corp = (
         config.corpus_meta(chat.corpus)["title"] if chat.corpus else "не выбран"
     )
-    favs = chat.favorites_for_corpus(chat.corpus or "1")
-    fav_line = ", ".join(f["name"] for f in favs) if favs else "пока пусто"
+    favs = chat.all_favorites()
+    fav_line = (
+        ", ".join(
+            f"{config.corpus_meta(f.get('corpus') or '1')['short']} {f['name']}"
+            for f in favs
+        )
+        if favs
+        else "пока пусто"
+    )
     lines = [
         "⚙️ <b>Настройки</b>",
         f"🏛 Корпус: <b>{escape(corp)}</b>",
@@ -345,18 +352,25 @@ def format_stats(chats: list[Chat], *, archive_rows: int = 0) -> str:
 
 
 def format_favorites(chat: Chat) -> str:
-    corp = chat.corpus or "1"
-    title = config.corpus_meta(corp)["title"]
-    favs = chat.favorites_for_corpus(corp)
-    lines = [f"⭐ <b>Избранное</b> · {escape(title)}", ""]
+    favs = chat.all_favorites()
+    lines = ["⭐ <b>Избранное</b> (оба корпуса)", ""]
     if not favs:
         lines.append("Пока пусто. Выберите группу и добавьте её сюда.")
     else:
         for i, f in enumerate(favs, 1):
-            mark = " ← сейчас" if f["id"] == chat.entity_id else ""
-            lines.append(f"{i}. <b>{escape(f['name'])}</b>{mark}")
+            short = config.corpus_meta(f.get("corpus") or "1")["short"]
+            same = (
+                f["id"] == chat.entity_id
+                and f.get("corpus") == (chat.corpus or "1")
+            )
+            mark = " ← сейчас" if same else ""
+            lines.append(
+                f"{i}. {escape(short)} <b>{escape(f['name'])}</b>{mark}"
+            )
     lines.append("")
-    lines.append("До 5 групп на корпус. Кнопки ниже — открыть или убрать.")
+    lines.append(
+        f"До {MAX_FAVORITES} групп на каждый корпус. Смена корпуса список не сбрасывает."
+    )
     return "\n".join(lines)
 
 

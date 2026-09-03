@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from datetime import date
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
+)
 
 from parser import Entity
 from store import Chat, DEFAULT_SETTINGS, MAX_FAVORITES
@@ -18,6 +24,21 @@ KIND_BTN = {
 
 def remove_reply_keyboard() -> ReplyKeyboardRemove:
     return ReplyKeyboardRemove()
+
+
+def main_reply_keyboard() -> ReplyKeyboardMarkup:
+    """Bottom keyboard for private chats only (hidden in groups)."""
+    return ReplyKeyboardMarkup(
+        [
+            [
+                KeyboardButton("📅 Расписание"),
+                KeyboardButton("📋 Меню"),
+            ],
+            [KeyboardButton("⚙️ Настройки")],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
 
 
 def corpus_keyboard() -> InlineKeyboardMarkup:

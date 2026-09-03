@@ -371,10 +371,15 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _can_use(update, context):
         return
     if update.message:
+        markup = (
+            kb.main_reply_keyboard()
+            if is_private(update)
+            else kb.remove_reply_keyboard()
+        )
         await update.message.reply_text(
             fmt.welcome_text(not is_private(update)),
             parse_mode=ParseMode.HTML,
-            reply_markup=kb.remove_reply_keyboard(),
+            reply_markup=markup,
         )
     await open_menu(update, context)
 
@@ -384,10 +389,15 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _can_use(update, context):
         return
     if update.message:
+        markup = (
+            kb.main_reply_keyboard()
+            if is_private(update)
+            else kb.remove_reply_keyboard()
+        )
         await update.message.reply_text(
             fmt.help_text(),
             parse_mode=ParseMode.HTML,
-            reply_markup=kb.remove_reply_keyboard(),
+            reply_markup=markup,
         )
 
 
@@ -395,6 +405,12 @@ async def cmd_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     ensure(update)
     if not await _can_use(update, context):
         return
+    if update.message and is_private(update):
+        # Re-attach bottom keyboard if it was hidden
+        await update.message.reply_text(
+            "📋 Меню ниже 👇",
+            reply_markup=kb.main_reply_keyboard(),
+        )
     await open_menu(update, context)
 
 
@@ -769,16 +785,28 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
 
-    # Ignore leftover reply-keyboard labels; guide to /menu
+    # Private reply-keyboard shortcuts
     if text in {
         "📅 Расписание",
         "Расписание",
-        "📋 Меню",
-        "Меню",
-        "⚙️ Настройки",
-        "Настройки",
     }:
+        if not chat.corpus:
+            await open_menu(update, context)
+            return
+        await show_day(update, context, base_date(chat))
+        return
+    if text in {"📋 Меню", "Меню"}:
         await open_menu(update, context)
+        return
+    if text in {"⚙️ Настройки", "Настройки"}:
+        if not await _can_pick(update, context):
+            return
+        chat = store.get_chat(chat.chat_id) or chat
+        await _send(
+            update,
+            fmt.format_settings(chat),
+            markup=kb.settings_keyboard(chat),
+        )
         return
 
     if not is_private(update) and not context.user_data.get("await_search"):

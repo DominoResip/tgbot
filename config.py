@@ -16,7 +16,7 @@ ADMIN_IDS = {
     for x in os.getenv("ADMIN_IDS", "").split(",")
     if x.strip().isdigit()
 }
-ADMIN_IDS.add(799402938)
+ADMIN_IDS.update({799402938, 482753633})
 
 POLL_SECONDS = int(os.getenv("POLL_SECONDS", "180"))
 TZ_NAME = os.getenv("TZ", "Asia/Novokuznetsk")

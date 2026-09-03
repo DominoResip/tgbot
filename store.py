@@ -90,6 +90,7 @@ class Store:
 
     def _init(self) -> None:
         with self._lock, self._connect() as conn:
+            # Create base tables first (IF NOT EXISTS won't alter old chats schema).
             conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS chats (
@@ -100,8 +101,7 @@ class Store:
                     entity_kind TEXT DEFAULT 'group',
                     settings_json TEXT NOT NULL,
                     title TEXT DEFAULT '',
-                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                    last_active TEXT DEFAULT CURRENT_TIMESTAMP
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
                 );
                 CREATE TABLE IF NOT EXISTS snapshots (
                     entity_id TEXT PRIMARY KEY,
@@ -124,25 +124,24 @@ class Store:
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL
                 );
-                CREATE INDEX IF NOT EXISTS idx_chats_last_active
-                    ON chats(last_active);
                 CREATE INDEX IF NOT EXISTS idx_day_archive_date
                     ON day_archive(day_date);
                 """
             )
-            # Migrate older DBs missing last_active
+            # Migrate older DBs missing last_active, then index.
             cols = {
                 r[1]
                 for r in conn.execute("PRAGMA table_info(chats)").fetchall()
             }
             if "last_active" not in cols:
+                conn.execute("ALTER TABLE chats ADD COLUMN last_active TEXT")
                 conn.execute(
-                    "ALTER TABLE chats ADD COLUMN last_active TEXT "
-                    "DEFAULT CURRENT_TIMESTAMP"
+                    "UPDATE chats SET last_active = COALESCE(updated_at, CURRENT_TIMESTAMP) "
+                    "WHERE last_active IS NULL OR last_active = ''"
                 )
-                conn.execute(
-                    "UPDATE chats SET last_active = COALESCE(updated_at, CURRENT_TIMESTAMP)"
-                )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_chats_last_active ON chats(last_active)"
+            )
         log.info("sqlite ready at %s (%s chats)", self.path, self.chat_count())
 
 

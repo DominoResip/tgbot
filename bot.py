@@ -238,18 +238,33 @@ async def show_day(
         return
     svc = svc_for(chat)
     try:
-        day = await svc.day_for(ent, target)
-        prev = await svc.neighbor_day(ent, target, -1)
-        nxt = await svc.neighbor_day(ent, target, 1)
+        day = await svc.day_for(ent, target, store)
+        prev, nxt = await svc.nav_bounds(ent, target)
+        from_archive = svc.is_archive_day(ent.id, target, store)
     except Exception:
         log.exception("day fetch failed")
         await _send(update, "Не удалось загрузить расписание.")
         return
     chat = store.get_chat(chat.chat_id) or chat
+    note = ""
+    if from_archive:
+        note = "Архив: день уже снят с сайта, сохранён в боте"
     await _send(
         update,
-        fmt.format_day(day, chat, updated_label=svc.updated_label),
-        markup=kb.schedule_nav(target, chat, prev_day=prev, next_day=nxt),
+        fmt.format_day(
+            day,
+            chat,
+            updated_label=svc.updated_label,
+            note=note,
+            from_archive=from_archive,
+        ),
+        markup=kb.schedule_nav(
+            target,
+            chat,
+            prev_day=prev,
+            next_day=nxt,
+            site_today=svc.page_date,
+        ),
         edit=edit,
     )
 
@@ -269,6 +284,8 @@ async def ensure_schedule_loaded(update: Update, chat) -> bool:
         await svc.refresh_today()
         if svc.updated_label:
             store.set_meta(f"updated:{svc.corpus_id}", svc.updated_label)
+        store.archive_service_days(svc)
+        store.purge_archived_days(config.ARCHIVE_KEEP_DAYS)
         store.set_meta("bootstrapped", "1")
     except Exception as exc:
         log.exception("on-demand schedule load failed")
@@ -383,7 +400,7 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message:
             await update.message.reply_text("Команда только для администратора бота.")
         return
-    text = fmt.format_stats(store.all_chats())
+    text = fmt.format_stats(store.all_chats(), archive_rows=store.archive_count())
     await _send(update, text)
 
 
@@ -653,6 +670,15 @@ async def morning_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def on_startup(app: Application) -> None:
+    log.info(
+        "db=%s chats=%s archive=%s",
+        config.DB_PATH,
+        store.chat_count(),
+        store.archive_count(),
+    )
+    removed = store.purge_inactive_chats(config.INACTIVE_CHAT_DAYS)
+    if removed:
+        log.info("startup purged %s inactive chats", removed)
     try:
         await app.bot.set_my_commands(
             [

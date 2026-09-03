@@ -12,25 +12,51 @@ from formatters import format_day, format_diff
 from parser import DaySchedule
 from schedule import ScheduleHub, ScheduleService
 from store import Store
+import config
 import weather
 
 log = logging.getLogger("spt.watcher")
 
 
+def _save_all_snapshots(service: ScheduleService, store: Store) -> None:
+    for eid, day in service.today_days.items():
+        store.save_snapshot(
+            service.snapshot_key(eid),
+            day.fingerprint(),
+            service.snapshot_payload(eid),
+            service.updated_label,
+        )
+
+
+def _persist_schedule(service: ScheduleService, store: Store) -> None:
+    _save_all_snapshots(service, store)
+    n = store.archive_service_days(service)
+    purged = store.purge_archived_days(config.ARCHIVE_KEEP_DAYS)
+    if n or purged:
+        log.info(
+            "corpus %s archive saved=%s purged=%s total=%s",
+            service.corpus_id,
+            n,
+            purged,
+            store.archive_count(),
+        )
+
+
 async def bootstrap(hub: ScheduleHub, store: Store) -> bool:
     import asyncio
-
-    import config
 
     last_exc: Exception | None = None
     for attempt in range(1, config.BOOTSTRAP_RETRIES + 1):
         try:
             await hub.refresh_all()
             for svc in hub.services.values():
-                _save_all_snapshots(svc, store)
+                _persist_schedule(svc, store)
                 if svc.updated_label:
                     store.set_meta(f"updated:{svc.corpus_id}", svc.updated_label)
             store.set_meta("bootstrapped", "1")
+            removed = store.purge_inactive_chats(config.INACTIVE_CHAT_DAYS)
+            if removed:
+                log.info("purged %s inactive chats", removed)
             total = sum(len(s.entities) for s in hub.services.values())
             log.info(
                 "loaded %s entities across corpora (attempt %s)",
@@ -52,16 +78,6 @@ async def bootstrap(hub: ScheduleHub, store: Store) -> bool:
     return False
 
 
-def _save_all_snapshots(service: ScheduleService, store: Store) -> None:
-    for eid, day in service.today_days.items():
-        store.save_snapshot(
-            service.snapshot_key(eid),
-            day.fingerprint(),
-            service.snapshot_payload(eid),
-            service.updated_label,
-        )
-
-
 async def poll_changes(hub: ScheduleHub, store: Store, bot: Bot) -> None:
     bootstrapped = store.get_meta("bootstrapped") == "1"
     try:
@@ -72,10 +88,11 @@ async def poll_changes(hub: ScheduleHub, store: Store, bot: Bot) -> None:
 
     if not bootstrapped:
         for svc in hub.services.values():
-            _save_all_snapshots(svc, store)
+            _persist_schedule(svc, store)
             if svc.updated_label:
                 store.set_meta(f"updated:{svc.corpus_id}", svc.updated_label)
         store.set_meta("bootstrapped", "1")
+        store.purge_inactive_chats(config.INACTIVE_CHAT_DAYS)
         return
 
     for corpus_id, svc in hub.services.items():
@@ -91,7 +108,7 @@ async def poll_changes(hub: ScheduleHub, store: Store, bot: Bot) -> None:
             store.set_meta(f"updated:{corpus_id}", svc.updated_label)
 
         if not notify_ids:
-            _save_all_snapshots(svc, store)
+            _persist_schedule(svc, store)
             continue
 
         log.info("corpus %s changed for %s entities", corpus_id, len(notify_ids))
@@ -103,6 +120,12 @@ async def poll_changes(hub: ScheduleHub, store: Store, bot: Bot) -> None:
                 svc.snapshot_payload(eid),
                 svc.updated_label,
             )
+        _persist_schedule(svc, store)
+
+    # Occasional cleanup of inactive chats (every poll is fine; cheap)
+    removed = store.purge_inactive_chats(config.INACTIVE_CHAT_DAYS)
+    if removed:
+        log.info("purged %s inactive chats", removed)
 
 
 def _today_diffs(service: ScheduleService, store: Store) -> list[str]:
@@ -221,7 +244,7 @@ async def send_morning(hub: ScheduleHub, store: Store, bot: Bot) -> None:
         day = svc.today_for(ent.id)
         if day is None:
             try:
-                day = await svc.day_for(ent, today)
+                day = await svc.day_for(ent, today, store)
             except Exception:
                 log.exception("morning day fetch failed")
                 continue

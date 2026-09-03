@@ -22,6 +22,11 @@ POLL_SECONDS = int(os.getenv("POLL_SECONDS", "180"))
 TZ_NAME = os.getenv("TZ", "Asia/Novokuznetsk")
 TZ = ZoneInfo(TZ_NAME)
 
+# Keep archived site days this many calendar days (by schedule date).
+ARCHIVE_KEEP_DAYS = int(os.getenv("ARCHIVE_KEEP_DAYS", "2"))
+# Drop chats with no activity longer than this.
+INACTIVE_CHAT_DAYS = int(os.getenv("INACTIVE_CHAT_DAYS", "30"))
+
 # Расписание звонков СПТ (1:20 на пару), по официальной таблице.
 BELLS_DEFAULT: dict[int, str] = {
     1: "08:30–09:50",

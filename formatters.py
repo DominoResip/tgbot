@@ -126,6 +126,7 @@ def format_day(
     note: str = "",
     updated_label: str = "",
     now: datetime | None = None,
+    from_archive: bool = False,
 ) -> str:
     if day is None:
         return "📭 Расписание пока не загружено. Откройте меню чуть позже."
@@ -143,6 +144,8 @@ def format_day(
             f"<i>Расписание на <b>{escape(date_label(day.day))}</b> для <b>{name}</b>:</i>"
         )
         lines.append(f"🏛 {escape(corp_title)}")
+        if from_archive:
+            lines.append("<i>📜 Архив — день уже снят с сайта</i>")
 
     if now is None:
         now = datetime.now(config.TZ)
@@ -198,9 +201,13 @@ def format_day(
                 lines.append(f"<i>{escape(upcoming[1])}</i>")
 
     upd = updated_label or note
-    if upd:
+    if note and updated_label:
         lines.append("")
-        lines.append(f"ℹ️ Последнее обновление: {escape(upd)}")
+        lines.append(f"ℹ️ {escape(note)}")
+        lines.append(f"ℹ️ Последнее обновление: {escape(updated_label)}")
+    elif upd:
+        lines.append("")
+        lines.append(f"ℹ️ Последнее обновление: {escape(upd)}" if updated_label else f"ℹ️ {escape(upd)}")
 
     return "\n".join(lines).rstrip()
 
@@ -281,7 +288,7 @@ def menu_text(chat: Chat) -> str:
     return "\n".join(lines)
 
 
-def format_stats(chats: list[Chat]) -> str:
+def format_stats(chats: list[Chat], *, archive_rows: int = 0) -> str:
     privates = [c for c in chats if c.chat_type == "private"]
     groups = [c for c in chats if c.chat_type in {"group", "supergroup"}]
     with_entity = [c for c in chats if c.entity_id]
@@ -304,6 +311,7 @@ def format_stats(chats: list[Chat]) -> str:
         f"Уведомления об изменениях: <b>{len(notify)}</b>",
         f"Утренние сообщения: <b>{len(morning)}</b>",
         f"Групп с закрытым доступом для участников: <b>{len(members_off)}</b>",
+        f"Архив дней в БД: <b>{archive_rows}</b>",
     ]
 
     if groups:
@@ -374,6 +382,7 @@ def help_text() -> str:
         "Все действия — кнопками под сообщениями.\n"
         "Меню: корпус, расписание, смена группы, избранное, настройки.\n"
         "Пустые дни на сайте при листании пропускаются.\n"
+        "Кнопка «Вчера» — расписание за предыдущий день (в т.ч. уже снятое с сайта).\n"
         "Утро в 8:00 (Кемерово): приветствие, погода и пары.\n\n"
         "В группах настройки меняют только админы.\n"
         "Админ группы может отключить доступ участникам в настройках."

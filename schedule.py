@@ -204,21 +204,83 @@ class ScheduleService:
         self._week_cache[entity.id] = (now, days)
         return days
 
-    async def day_for(self, entity: Entity, target: date) -> DaySchedule | None:
+    async def day_for(
+        self, entity: Entity, target: date, store=None
+    ) -> DaySchedule | None:
+        live: DaySchedule | None = None
         if self.page_date == target:
-            found = self.today_for(entity.id)
-            if found:
-                return found
+            live = self.today_for(entity.id)
+            if live and live.lessons:
+                return live
         days = await self.week_for(entity)
         for day in days:
             if day.day == target:
-                return day
+                if day.lessons:
+                    return day
+                live = live or day
+                break
+
+        if store is not None:
+            archived = store.get_archived_day(self.corpus_id, entity.id, target)
+            if archived and archived.lessons:
+                return archived
+            if archived and live is None:
+                return archived
+
+        if live is not None:
+            return live
         return DaySchedule(
             entity_id=entity.id,
             name=entity.name,
             kind=entity.kind,
             day=target,
         )
+
+    def archive_prev_date(self) -> date | None:
+        """The only archived day users may open: one calendar day before site page."""
+        if not self.page_date:
+            return None
+        return self.page_date - timedelta(days=1)
+
+    async def nav_bounds(
+        self, entity: Entity, current: date
+    ) -> tuple[date | None, date | None]:
+        """
+        Prev/next for schedule UI.
+        At most one calendar day before the current site page date.
+        """
+        page = self.page_date
+        min_day = self.archive_prev_date()
+
+        if page and current == page:
+            prev: date | None = min_day
+            nxt = await self.neighbor_day(entity, current, 1)
+            if nxt == current:
+                nxt = None
+            return prev, nxt
+
+        if min_day and current == min_day:
+            return None, page
+
+        prev = await self.neighbor_day(entity, current, -1)
+        nxt = await self.neighbor_day(entity, current, 1)
+        if min_day and prev < min_day:
+            prev = min_day if current > min_day else None
+        if page and nxt and min_day and current < page and nxt > page:
+            nxt = page
+        if prev == current:
+            prev = None
+        if nxt == current:
+            nxt = None
+        return prev, nxt
+
+    def is_archive_day(self, entity_id: str, target: date, store) -> bool:
+        """True when user opened the one-day lookback (before current site page)."""
+        page = self.page_date
+        min_day = self.archive_prev_date()
+        if not page or not min_day:
+            return False
+        return target == min_day and target < page
 
     async def navigable_dates(self, entity: Entity) -> list[date]:
         """Dates present on the site week view that have at least one lesson."""

@@ -229,44 +229,48 @@ async def show_day(
     *,
     edit: bool = False,
 ) -> None:
-    chat = ensure(update)
-    if not chat.corpus:
-        await open_menu(update, context)
-        return
-    ent = await _need_entity(update)
-    if not ent:
-        return
-    svc = svc_for(chat)
     try:
-        day = await svc.day_for(ent, target, store)
-        prev, nxt = await svc.nav_bounds(ent, target)
-        from_archive = svc.is_archive_day(ent.id, target, store)
+        chat = ensure(update)
+        if not chat.corpus:
+            await open_menu(update, context)
+            return
+        ent = await _need_entity(update)
+        if not ent:
+            return
+        svc = svc_for(chat)
+        try:
+            day = await svc.day_for(ent, target, store)
+            prev, nxt = await svc.nav_bounds(ent, target)
+            from_archive = svc.is_archive_day(ent.id, target, store)
+        except Exception:
+            log.exception("day fetch failed")
+            await _send(update, "Не удалось загрузить расписание.")
+            return
+        chat = store.get_chat(chat.chat_id) or chat
+        note = ""
+        if from_archive:
+            note = "Архив: день уже снят с сайта, сохранён в боте"
+        await _send(
+            update,
+            fmt.format_day(
+                day,
+                chat,
+                updated_label=svc.updated_label,
+                note=note,
+                from_archive=from_archive,
+            ),
+            markup=kb.schedule_nav(
+                target,
+                chat,
+                prev_day=prev,
+                next_day=nxt,
+                site_today=svc.page_date,
+            ),
+            edit=edit,
+        )
     except Exception:
-        log.exception("day fetch failed")
-        await _send(update, "Не удалось загрузить расписание.")
-        return
-    chat = store.get_chat(chat.chat_id) or chat
-    note = ""
-    if from_archive:
-        note = "Архив: день уже снят с сайта, сохранён в боте"
-    await _send(
-        update,
-        fmt.format_day(
-            day,
-            chat,
-            updated_label=svc.updated_label,
-            note=note,
-            from_archive=from_archive,
-        ),
-        markup=kb.schedule_nav(
-            target,
-            chat,
-            prev_day=prev,
-            next_day=nxt,
-            site_today=svc.page_date,
-        ),
-        edit=edit,
-    )
+        log.exception("show_day failed")
+        await _send(update, "Не удалось показать расписание. Попробуйте /menu")
 
 
 def _remember_entity(chat_id: int, ent, corpus: str) -> None:

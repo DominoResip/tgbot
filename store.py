@@ -80,7 +80,10 @@ class Chat:
         favs = self.favorites()
         return sorted(
             favs,
-            key=lambda f: (f.get("corpus") or "1", f.get("name") or "").casefold(),
+            key=lambda f: (
+                str(f.get("corpus") or "1"),
+                str(f.get("name") or "").casefold(),
+            ),
         )
 
 

@@ -28,7 +28,7 @@ ARCHIVE_KEEP_DAYS = int(os.getenv("ARCHIVE_KEEP_DAYS", "5"))
 # Drop chats with no activity longer than this.
 INACTIVE_CHAT_DAYS = int(os.getenv("INACTIVE_CHAT_DAYS", "30"))
 
-# Расписание звонков СПТ (1:20 на пару), по официальной таблице.
+# Расписание звонков 1 корпуса (1:20 на пару).
 BELLS_DEFAULT: dict[int, str] = {
     1: "08:30–09:50",
     2: "10:00–11:20",
@@ -37,6 +37,17 @@ BELLS_DEFAULT: dict[int, str] = {
     5: "14:55–16:15",
     6: "16:20–17:40",
     7: "17:45–19:05",
+}
+
+# Расписание звонков 2 корпуса (сдвинутые перемены).
+BELLS_CORPUS_2: dict[int, str] = {
+    1: "08:30–09:50",
+    2: "10:00–11:20",
+    3: "11:40–13:00",
+    4: "13:20–14:40",
+    5: "14:50–16:10",
+    6: "16:15–17:35",
+    7: "17:40–19:00",
 }
 
 CORPORA: dict[str, dict] = {
@@ -56,7 +67,7 @@ CORPORA: dict[str, dict] = {
         "base": os.getenv(
             "SCHEDULE_BASE_2", "https://schedule.spt42.ru/2_korpus"
         ).rstrip("/"),
-        "bells": dict(BELLS_DEFAULT),
+        "bells": dict(BELLS_CORPUS_2),
     },
 }
 

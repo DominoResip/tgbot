@@ -23,7 +23,8 @@ TZ_NAME = os.getenv("TZ", "Asia/Novokuznetsk")
 TZ = ZoneInfo(TZ_NAME)
 
 # Keep archived site days this many calendar days (by schedule date).
-ARCHIVE_KEEP_DAYS = int(os.getenv("ARCHIVE_KEEP_DAYS", "2"))
+# 5 covers Fri→Mon gaps (weekend) without growing the DB much.
+ARCHIVE_KEEP_DAYS = int(os.getenv("ARCHIVE_KEEP_DAYS", "5"))
 # Drop chats with no activity longer than this.
 INACTIVE_CHAT_DAYS = int(os.getenv("INACTIVE_CHAT_DAYS", "30"))
 

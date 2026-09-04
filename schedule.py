@@ -236,21 +236,38 @@ class ScheduleService:
             day=target,
         )
 
-    def archive_prev_date(self) -> date | None:
-        """The only archived day users may open: one calendar day before site page."""
+    def archive_prev_date(
+        self, entity_id: str | None = None, store=None
+    ) -> date | None:
+        """
+        Previous active schedule day the user may open from archive.
+
+        Prefer the latest archived day for this entity before the current
+        site page date (handles weekend/holiday gaps: Fri -> Mon).
+        Fall back to calendar day before page_date.
+        """
         if not self.page_date:
             return None
+        if store is not None and entity_id:
+            found = store.latest_archived_before(
+                self.corpus_id, entity_id, self.page_date
+            )
+            if found is not None:
+                return found
         return self.page_date - timedelta(days=1)
 
     async def nav_bounds(
-        self, entity: Entity, current: date
+        self,
+        entity: Entity,
+        current: date,
+        store=None,
     ) -> tuple[date | None, date | None]:
         """
         Prev/next for schedule UI.
-        At most one calendar day before the current site page date.
+        At most one archived active day before the current site page date.
         """
         page = self.page_date
-        min_day = self.archive_prev_date()
+        min_day = self.archive_prev_date(entity.id, store)
 
         if page and current == page:
             prev: date | None = min_day
@@ -264,7 +281,7 @@ class ScheduleService:
 
         prev = await self.neighbor_day(entity, current, -1)
         nxt = await self.neighbor_day(entity, current, 1)
-        if min_day and prev < min_day:
+        if min_day and prev is not None and prev < min_day:
             prev = min_day if current > min_day else None
         if page and nxt and min_day and current < page and nxt > page:
             nxt = page
@@ -277,7 +294,7 @@ class ScheduleService:
     def is_archive_day(self, entity_id: str, target: date, store) -> bool:
         """True when user opened the one-day lookback (before current site page)."""
         page = self.page_date
-        min_day = self.archive_prev_date()
+        min_day = self.archive_prev_date(entity_id, store)
         if not page or not min_day:
             return False
         return target == min_day and target < page

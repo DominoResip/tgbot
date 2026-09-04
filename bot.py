@@ -240,7 +240,7 @@ async def show_day(
         svc = svc_for(chat)
         try:
             day = await svc.day_for(ent, target, store)
-            prev, nxt = await svc.nav_bounds(ent, target)
+            prev, nxt = await svc.nav_bounds(ent, target, store)
             from_archive = svc.is_archive_day(ent.id, target, store)
         except Exception:
             log.exception("day fetch failed")
@@ -371,15 +371,11 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _can_use(update, context):
         return
     if update.message:
-        markup = (
-            kb.main_reply_keyboard()
-            if is_private(update)
-            else kb.remove_reply_keyboard()
-        )
+        # Always remove bottom reply keyboard — management is via messages/inline.
         await update.message.reply_text(
             fmt.welcome_text(not is_private(update)),
             parse_mode=ParseMode.HTML,
-            reply_markup=markup,
+            reply_markup=kb.remove_reply_keyboard(),
         )
     await open_menu(update, context)
 
@@ -389,15 +385,10 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _can_use(update, context):
         return
     if update.message:
-        markup = (
-            kb.main_reply_keyboard()
-            if is_private(update)
-            else kb.remove_reply_keyboard()
-        )
         await update.message.reply_text(
             fmt.help_text(),
             parse_mode=ParseMode.HTML,
-            reply_markup=markup,
+            reply_markup=kb.remove_reply_keyboard(),
         )
 
 
@@ -406,10 +397,10 @@ async def cmd_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _can_use(update, context):
         return
     if update.message and is_private(update):
-        # Re-attach bottom keyboard if it was hidden
+        # Drop residual bottom keyboard if it was still visible.
         await update.message.reply_text(
             "📋 Меню ниже 👇",
-            reply_markup=kb.main_reply_keyboard(),
+            reply_markup=kb.remove_reply_keyboard(),
         )
     await open_menu(update, context)
 

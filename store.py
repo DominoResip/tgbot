@@ -544,6 +544,34 @@ class Store:
             ).fetchone()
         return row is not None
 
+    def latest_archived_before(
+        self, corpus_id: str, entity_id: str, before_day
+    ):
+        """Most recent archived schedule day strictly before before_day."""
+        from datetime import date as date_cls
+
+        day_s = (
+            before_day.isoformat()
+            if hasattr(before_day, "isoformat")
+            else str(before_day)
+        )
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT day_date FROM day_archive
+                WHERE corpus_id = ? AND entity_id = ? AND day_date < ?
+                ORDER BY day_date DESC
+                LIMIT 1
+                """,
+                (corpus_id, entity_id, day_s),
+            ).fetchone()
+        if not row:
+            return None
+        try:
+            return date_cls.fromisoformat(str(row["day_date"]))
+        except ValueError:
+            return None
+
     def purge_archived_days(
         self, keep_days: int = 2, today: Any = None
     ) -> int:

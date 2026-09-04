@@ -61,14 +61,12 @@ def schedule_nav(
     next_day: date | None = None,
     site_today: date | None = None,
 ) -> InlineKeyboardMarkup:
-    from datetime import timedelta
-
     rows: list[list[InlineKeyboardButton]] = []
     nav_row: list[InlineKeyboardButton] = []
-    yesterday = (site_today - timedelta(days=1)) if site_today else None
 
+    # «Вчера» = previous active site day (may skip weekends/holidays).
     if prev_day and prev_day != day:
-        if site_today and day == site_today and prev_day == yesterday:
+        if site_today and day == site_today:
             label = f"👈 Вчера {date_label(prev_day)}"
         else:
             label = f"👈 {date_label(prev_day)}"
@@ -76,7 +74,7 @@ def schedule_nav(
             InlineKeyboardButton(label, callback_data=f"d:{prev_day.strftime('%Y%m%d')}")
         )
     if next_day and next_day != day:
-        if site_today and yesterday and day == yesterday and next_day == site_today:
+        if site_today and day != site_today and next_day == site_today:
             label = f"Сегодня {date_label(next_day)} 👉"
         else:
             label = f"{date_label(next_day)} 👉"

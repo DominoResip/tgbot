@@ -76,6 +76,10 @@ BELLS = BELLS_DEFAULT
 
 MORNING_HOUR = int(os.getenv("MORNING_HOUR", "8"))
 MORNING_MINUTE = int(os.getenv("MORNING_MINUTE", "0"))
+# Pause between morning messages to different chats (seconds).
+MORNING_SEND_DELAY = float(os.getenv("MORNING_SEND_DELAY", "0.35"))
+# Pause between "schedule changed" notifications (seconds). ~1200 chats → ~7 min at 0.35s.
+NOTIFY_SEND_DELAY = float(os.getenv("NOTIFY_SEND_DELAY", "0.35"))
 
 WEATHER_LAT = float(os.getenv("WEATHER_LAT", "55.3333"))
 WEATHER_LON = float(os.getenv("WEATHER_LON", "86.0833"))

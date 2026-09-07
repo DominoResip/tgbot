@@ -870,14 +870,13 @@ async def on_startup(app: Application) -> None:
     if removed:
         log.info("startup purged %s inactive chats", removed)
     try:
+        # Public command menu only. Admin commands stay available by typing
+        # /admin /stats /broadcast, but are hidden from the list.
         await app.bot.set_my_commands(
             [
                 BotCommand("start", "Запуск"),
                 BotCommand("menu", "Меню"),
                 BotCommand("help", "Справка"),
-                BotCommand("admin", "Админка"),
-                BotCommand("stats", "Статистика (админ)"),
-                BotCommand("broadcast", "Рассылка (админ)"),
             ]
         )
     except Exception:

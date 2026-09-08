@@ -23,13 +23,18 @@ DEFAULT_SETTINGS = {
     "compact": False,
     "notify": True,
     "notify_morning": False,
+    # Local time for morning digest (Kemerovo TZ).
+    "morning_hour": 8,
+    "morning_minute": 0,
+    # YYYY-MM-DD of last successful morning send (anti double-send).
+    "morning_last_date": "",
     # Groups: if False, only chat admins may use the bot
     "allow_members": True,
     "favorites": [],
     "corpus": "",
 }
 
-MAX_FAVORITES = 5
+MAX_FAVORITES = 8
 
 
 @dataclass
@@ -314,9 +319,20 @@ class Store:
         return chat
 
     def add_favorite(
-        self, chat_id: int, entity_id: str, name: str, kind: str = "group",
+        self,
+        chat_id: int,
+        entity_id: str,
+        name: str,
+        kind: str = "group",
         corpus: str = "",
+        *,
+        evict: bool = False,
     ) -> Chat:
+        """
+        Add entity to favorites (group / teacher / room).
+        By default does NOT drop older favorites when the limit is reached
+        (returns unchanged chat). Pass evict=True to replace the oldest.
+        """
         chat = self.get_chat(chat_id)
         if not chat:
             raise KeyError(chat_id)
@@ -327,8 +343,17 @@ class Store:
         same = [f for f in favs if f.get("corpus") == corpus]
         other = [f for f in favs if f.get("corpus") != corpus]
         if len(same) >= MAX_FAVORITES:
+            if not evict:
+                return chat
             same = same[-(MAX_FAVORITES - 1) :]
-        same.append({"id": entity_id, "name": name, "kind": kind, "corpus": corpus})
+        same.append(
+            {
+                "id": entity_id,
+                "name": name,
+                "kind": kind or "group",
+                "corpus": corpus,
+            }
+        )
         chat.settings["favorites"] = other + same
         return self._save_settings(chat)
 
@@ -363,11 +388,23 @@ class Store:
         chat.settings[key] = not bool(chat.settings.get(key, DEFAULT_SETTINGS.get(key)))
         return self._save_settings(chat)
 
-    def set_setting(self, chat_id: int, key: str, value: bool) -> Chat:
+    def set_setting(self, chat_id: int, key: str, value) -> Chat:
         chat = self.get_chat(chat_id)
         if not chat:
             raise KeyError(chat_id)
         chat.settings[key] = value
+        return self._save_settings(chat)
+
+    def set_morning_time(
+        self, chat_id: int, hour: int, minute: int = 0
+    ) -> Chat:
+        chat = self.get_chat(chat_id)
+        if not chat:
+            raise KeyError(chat_id)
+        hour = max(5, min(12, int(hour)))
+        minute = 0 if int(minute) < 30 else 30
+        chat.settings["morning_hour"] = hour
+        chat.settings["morning_minute"] = minute
         return self._save_settings(chat)
 
     def subscribers(

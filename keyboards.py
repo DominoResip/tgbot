@@ -120,7 +120,8 @@ def menu_keyboard(chat: Chat) -> InlineKeyboardMarkup:
         [
             [InlineKeyboardButton(f"🏛 Корпус: {title}", callback_data="m:corpus")],
             [InlineKeyboardButton("📅 Расписание", callback_data="d:today")],
-            [InlineKeyboardButton(f"👥 Группа: {who}", callback_data="m:pick")],
+            [InlineKeyboardButton(f"👥 Сейчас: {who}", callback_data="m:pick")],
+            [InlineKeyboardButton("🔎 Быстрый поиск", callback_data="m:search")],
             [InlineKeyboardButton("⭐ Избранное", callback_data="m:favs")],
             [InlineKeyboardButton("⚙️ Настройки", callback_data="m:set")],
         ]
@@ -131,19 +132,22 @@ def favorites_keyboard(chat: Chat) -> InlineKeyboardMarkup:
     favs = chat.all_favorites()
     corp = chat.corpus or "1"
     rows: list[list[InlineKeyboardButton]] = []
+    kind_icon = {"group": "👥", "teacher": "🔎", "room": "🚪"}
     for f in favs:
         fcorp = f.get("corpus") or "1"
         short = config.corpus_meta(fcorp)["short"]
+        icon = kind_icon.get(f.get("kind") or "group", "⭐")
         rows.append(
             [
                 InlineKeyboardButton(
-                    f"📅 {short} {f['name']}",
+                    f"{icon} {short} {f['name']}",
                     callback_data=f"f:{fcorp}:{f['id']}",
                 ),
                 InlineKeyboardButton("🗑", callback_data=f"xf:{fcorp}:{f['id']}"),
             ]
         )
-    if chat.entity_id and chat.entity_kind == "group":
+    # Groups, teachers and rooms can all be favorited.
+    if chat.entity_id:
         in_fav = any(
             f["id"] == chat.entity_id and f.get("corpus") == corp for f in favs
         )
@@ -166,7 +170,17 @@ def favorites_keyboard(chat: Chat) -> InlineKeyboardMarkup:
                     )
                 ]
             )
-    rows.append([InlineKeyboardButton("👥 Выбрать группу", callback_data="m:pick")])
+        elif not in_fav and same_corp_count >= MAX_FAVORITES:
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        f"Лимит избранного ({MAX_FAVORITES})",
+                        callback_data="m:favs",
+                    )
+                ]
+            )
+    rows.append([InlineKeyboardButton("🔎 Быстрый поиск", callback_data="m:search")])
+    rows.append([InlineKeyboardButton("👥 Выбрать", callback_data="m:pick")])
     rows.append([InlineKeyboardButton("К меню 🔙", callback_data="m:home")])
     return InlineKeyboardMarkup(rows)
 
@@ -294,14 +308,22 @@ def settings_keyboard(chat: Chat) -> InlineKeyboardMarkup:
         )
         return f"{'✅' if on else '❌'} {title}"
 
+    mh = int(chat.settings.get("morning_hour", DEFAULT_SETTINGS["morning_hour"]))
+    mm = int(chat.settings.get("morning_minute", DEFAULT_SETTINGS["morning_minute"]))
+    morning_lab = f"{'✅' if chat.flag('notify_morning') else '❌'} Утро + погода ({mh:02d}:{mm:02d})"
+
     rows: list[list[InlineKeyboardButton]] = [
         [InlineKeyboardButton(lab("show_teacher", "Преподаватель"), callback_data="t:show_teacher")],
         [InlineKeyboardButton(lab("show_room", "Аудитория"), callback_data="t:show_room")],
         [InlineKeyboardButton(lab("show_bells", "Звонки"), callback_data="t:show_bells")],
         [InlineKeyboardButton(lab("show_empty", "Пустые пары"), callback_data="t:show_empty")],
         [InlineKeyboardButton(lab("notify", "Изменения на сайте"), callback_data="t:notify")],
-        [InlineKeyboardButton(lab("notify_morning", "Утро в 8:00 + погода"), callback_data="t:notify_morning")],
+        [InlineKeyboardButton(morning_lab, callback_data="t:notify_morning")],
     ]
+    if chat.flag("notify_morning"):
+        rows.append(
+            [InlineKeyboardButton("⏰ Время утреннего уведомления", callback_data="t:mtime")]
+        )
     if chat.is_group_chat:
         rows.append(
             [
@@ -313,4 +335,31 @@ def settings_keyboard(chat: Chat) -> InlineKeyboardMarkup:
         )
     rows.append([InlineKeyboardButton("📅 К расписанию", callback_data="d:today")])
     rows.append([InlineKeyboardButton("К меню 🔙", callback_data="m:home")])
+    return InlineKeyboardMarkup(rows)
+
+
+def morning_time_keyboard(chat: Chat) -> InlineKeyboardMarkup:
+    """Pick morning digest time (half-hour steps, 6:00–10:00)."""
+    cur_h = int(chat.settings.get("morning_hour", 8))
+    cur_m = int(chat.settings.get("morning_minute", 0))
+    slots = [
+        (6, 0), (6, 30), (7, 0), (7, 30), (8, 0),
+        (8, 30), (9, 0), (9, 30), (10, 0),
+    ]
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for h, m in slots:
+        mark = "• " if (h == cur_h and m == cur_m) else ""
+        row.append(
+            InlineKeyboardButton(
+                f"{mark}{h:02d}:{m:02d}",
+                callback_data=f"t:mset:{h}:{m}",
+            )
+        )
+        if len(row) == 3:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([InlineKeyboardButton("« Настройки", callback_data="m:set")])
     return InlineKeyboardMarkup(rows)

@@ -275,8 +275,11 @@ async def show_day(
 
 def _remember_entity(chat_id: int, ent, corpus: str) -> None:
     store.set_entity(chat_id, ent.id, ent.name, ent.kind)
+    # Auto-add groups only if there is free favorite slot (never silently drop teachers/rooms).
     if ent.kind == "group":
-        store.add_favorite(chat_id, ent.id, ent.name, ent.kind, corpus=corpus)
+        store.add_favorite(
+            chat_id, ent.id, ent.name, ent.kind, corpus=corpus, evict=False
+        )
 
 
 async def ensure_schedule_loaded(update: Update, chat) -> bool:
@@ -557,7 +560,35 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if data.startswith("t:"):
         if not await _can_pick(update, context):
             return
-        chat = store.toggle_setting(chat.chat_id, data[2:])
+        key = data[2:]
+        if key == "mtime":
+            chat = store.get_chat(chat.chat_id) or chat
+            await _send(
+                update,
+                "⏰ Выберите время утреннего уведомления (Кемерово):",
+                markup=kb.morning_time_keyboard(chat),
+                edit=True,
+            )
+            return
+        if key.startswith("mset:"):
+            # t:mset:H:M
+            parts = key.split(":")
+            try:
+                hour = int(parts[1])
+                minute = int(parts[2]) if len(parts) > 2 else 0
+            except (IndexError, ValueError):
+                hour, minute = 8, 0
+            chat = store.set_morning_time(chat.chat_id, hour, minute)
+            if not chat.flag("notify_morning"):
+                chat = store.set_setting(chat.chat_id, "notify_morning", True)
+            await _send(
+                update,
+                fmt.format_settings(chat),
+                markup=kb.settings_keyboard(chat),
+                edit=True,
+            )
+            return
+        chat = store.toggle_setting(chat.chat_id, key)
         await _send(
             update,
             fmt.format_settings(chat),
@@ -758,13 +789,14 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if data == "m:favadd":
         if not await _can_pick(update, context):
             return
-        if chat.entity_id and chat.entity_kind == "group":
+        if chat.entity_id:
             store.add_favorite(
                 chat.chat_id,
                 chat.entity_id,
                 chat.entity_name,
-                chat.entity_kind,
+                chat.entity_kind or "group",
                 corpus=chat.corpus,
+                evict=False,
             )
         await open_favorites(update, context)
         return
@@ -772,16 +804,30 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if not await _can_pick(update, context):
             return
         if not chat.entity_id:
-            await _send(update, "Сначала выберите группу.")
+            await _send(update, "Сначала выберите группу, преподавателя или аудиторию.")
             return
         store.toggle_favorite(
             chat.chat_id,
             chat.entity_id,
             chat.entity_name,
-            chat.entity_kind,
+            chat.entity_kind or "group",
             corpus=chat.corpus,
         )
         await open_favorites(update, context)
+        return
+    if data == "m:search":
+        if not await _can_pick(update, context):
+            return
+        if not chat.corpus:
+            await open_menu(update, context)
+            return
+        context.user_data["await_search"] = None  # search all kinds
+        await _send(
+            update,
+            "🔎 <b>Быстрый поиск</b>\n"
+            "Напишите название группы, фамилию преподавателя или номер аудитории.\n"
+            "Пример: <code>АСУ-25</code>, <code>Иванов</code>, <code>423</code>",
+        )
         return
     if data.startswith("xf:"):
         if not await _can_pick(update, context):
@@ -1035,9 +1081,12 @@ def build_app() -> Application:
     app.job_queue.run_repeating(
         poll_job, interval=config.POLL_SECONDS, first=config.POLL_SECONDS
     )
-    app.job_queue.run_daily(
+    # Every 15 minutes: send morning digests to chats whose preferred time matches.
+    app.job_queue.run_repeating(
         morning_job,
-        time=time(hour=config.MORNING_HOUR, minute=config.MORNING_MINUTE, tzinfo=config.TZ),
+        interval=900,
+        first=30,
+        name="morning_tick",
     )
     return app
 

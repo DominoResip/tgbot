@@ -244,18 +244,36 @@ async def _notify_entity(
 
 
 async def send_morning(hub: ScheduleHub, store: Store, bot: Bot) -> None:
-    """Send morning digests only on days with an active schedule (has lessons)."""
+    """
+    Morning digests for chats whose preferred local time matches now.
+    Runs every ~15 minutes from the job queue; each chat is sent at most once/day.
+    Only on calendar days that match the site page and have lessons.
+    """
     import asyncio
     from datetime import datetime
 
+    now = datetime.now(config.TZ)
+    calendar_today = now.date()
+    today_s = calendar_today.isoformat()
     weather_line = await weather.kemerovo_weather_line()
-    calendar_today = datetime.now(config.TZ).date()
     sent = 0
     skipped = 0
 
     for chat in store.morning_subscribers():
         if not chat.corpus or not chat.entity_id:
             continue
+
+        # Already sent today for this chat.
+        if str(chat.settings.get("morning_last_date") or "") == today_s:
+            skipped += 1
+            continue
+
+        pref_h = int(chat.settings.get("morning_hour", config.MORNING_HOUR))
+        pref_m = int(chat.settings.get("morning_minute", config.MORNING_MINUTE))
+        # Match within the current 15-minute job window.
+        if now.hour != pref_h or not (pref_m <= now.minute < pref_m + 15):
+            continue
+
         svc = hub.get(chat.corpus)
         if svc.page_date is None:
             try:
@@ -264,8 +282,7 @@ async def send_morning(hub: ScheduleHub, store: Store, bot: Bot) -> None:
                 log.exception("morning refresh failed for %s", chat.corpus)
                 continue
 
-        # Only when site day matches real calendar day
-        # (skip weekends/holidays if site already shows next study day).
+        # Only when site day matches real calendar day.
         if svc.page_date is None or svc.page_date != calendar_today:
             skipped += 1
             continue
@@ -281,7 +298,6 @@ async def send_morning(hub: ScheduleHub, store: Store, bot: Bot) -> None:
                 log.exception("morning day fetch failed")
                 continue
 
-        # No pairs today for this group/teacher/room — skip.
         if not day or not day.lessons:
             skipped += 1
             continue
@@ -299,8 +315,8 @@ async def send_morning(hub: ScheduleHub, store: Store, bot: Bot) -> None:
                 parse_mode=ParseMode.HTML,
                 disable_web_page_preview=True,
             )
+            store.set_setting(chat.chat_id, "morning_last_date", today_s)
             sent += 1
-            # Spread load across chats / Telegram / host.
             if config.MORNING_SEND_DELAY > 0:
                 await asyncio.sleep(config.MORNING_SEND_DELAY)
         except Forbidden:
@@ -308,7 +324,7 @@ async def send_morning(hub: ScheduleHub, store: Store, bot: Bot) -> None:
         except TelegramError:
             log.exception("morning send failed for %s", chat.chat_id)
 
-    log.info("morning done: sent=%s skipped=%s", sent, skipped)
+    log.info("morning done: sent=%s skipped=%s at %s", sent, skipped, now.strftime("%H:%M"))
 
 
 def tomorrow_date(service: ScheduleService) -> date:

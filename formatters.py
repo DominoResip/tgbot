@@ -263,8 +263,17 @@ def format_settings(chat: Chat) -> str:
         mark("show_empty", "Пустые пары"),
         "",
         mark("notify", "Уведомлять об изменениях"),
-        mark("notify_morning", "Утро в 8:00 + погода"),
     ]
+    mh = int(chat.settings.get("morning_hour", 8))
+    mm = int(chat.settings.get("morning_minute", 0))
+    lines.append(
+        mark("notify_morning", f"Утро + погода ({mh:02d}:{mm:02d})")
+    )
+    if chat.flag("notify_morning"):
+        lines.append(
+            f"<i>Время утреннего сообщения: {mh:02d}:{mm:02d} (Кемерово). "
+            "Сменить — кнопкой ниже.</i>"
+        )
     if chat.is_group_chat:
         lines.append("")
         lines.append(
@@ -284,7 +293,8 @@ def format_settings(chat: Chat) -> str:
 def menu_text(chat: Chat) -> str:
     lines = [
         "📋 <b>Меню</b>",
-        "Бот расписания СПТ: пары, звонки, избранные группы и уведомления об изменениях на сайте.",
+        "Бот расписания СПТ: пары, звонки, избранное и уведомления.",
+        "Быстрый путь: напишите группу, преподавателя или аудиторию текстом.",
     ]
     if chat.corpus:
         lines.append(f"🏛 {escape(config.corpus_meta(chat.corpus)['title'])}")
@@ -396,23 +406,30 @@ def format_stats(
 
 def format_favorites(chat: Chat) -> str:
     favs = chat.all_favorites()
+    kind_ru = {"group": "группа", "teacher": "препод", "room": "ауд."}
     lines = ["⭐ <b>Избранное</b> (оба корпуса)", ""]
     if not favs:
-        lines.append("Пока пусто. Выберите группу и добавьте её сюда.")
+        lines.append(
+            "Пока пусто. Откройте группу, преподавателя или аудиторию "
+            "и нажмите «Добавить»."
+        )
     else:
         for i, f in enumerate(favs, 1):
             short = config.corpus_meta(f.get("corpus") or "1")["short"]
+            k = kind_ru.get(f.get("kind") or "group", "")
             same = (
                 f["id"] == chat.entity_id
                 and f.get("corpus") == (chat.corpus or "1")
             )
             mark = " ← сейчас" if same else ""
             lines.append(
-                f"{i}. {escape(short)} <b>{escape(f['name'])}</b>{mark}"
+                f"{i}. {escape(short)} <b>{escape(f['name'])}</b>"
+                f" <i>({k})</i>{mark}"
             )
     lines.append("")
     lines.append(
-        f"До {MAX_FAVORITES} групп на каждый корпус. Смена корпуса список не сбрасывает."
+        f"До {MAX_FAVORITES} на каждый корпус (группы, преподы и аудитории). "
+        "Старые записи сами не вытесняются."
     )
     return "\n".join(lines)
 
@@ -436,14 +453,14 @@ def format_diff(old_lessons: list[dict], new_day: DaySchedule, chat: Chat) -> st
 def help_text() -> str:
     return (
         "📅 <b>СПТ · 1 и 2 корпус</b>\n\n"
-        "Все действия — кнопками под сообщениями и командами.\n"
-        "Меню: корпус, расписание, смена группы, избранное, настройки.\n"
-        "Пустые дни на сайте при листании пропускаются.\n"
-        "Кнопка «Вчера» — предыдущий активный день расписания "
-        "(в т.ч. уже снятый с сайта, с учётом выходных).\n"
-        "Утро в 8:00 (Кемерово): приветствие, погода и пары.\n\n"
-        "В группах настройки меняют только админы.\n"
-        "Админ группы может отключить доступ участникам в настройках."
+        "Кнопки под сообщениями или команды.\n"
+        "В личке можно просто написать <b>АСУ-25</b>, фамилию преподавателя "
+        "или номер аудитории — бот сразу найдёт расписание.\n"
+        "Меню → «🔎 Быстрый поиск» — то же самое.\n"
+        "Избранное: группы, преподаватели и аудитории.\n"
+        "«Вчера» — предыдущий активный день (с учётом выходных).\n"
+        "Утро + погода: время настраивается в настройках.\n\n"
+        "В группах настройки меняют только админы."
     )
 
 
@@ -457,6 +474,7 @@ def welcome_text(is_group: bool) -> str:
         )
     return (
         "👋 Бот расписания <b>Сибирского политехнического техникума</b>.\n\n"
-        "Выберите корпус и группу кнопками в меню.\n"
+        "Выберите корпус в меню или просто напишите название группы, "
+        "фамилию преподавателя или аудиторию.\n"
         "Нажмите /menu"
     )

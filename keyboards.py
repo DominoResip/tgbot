@@ -175,7 +175,8 @@ def admin_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [InlineKeyboardButton("📊 Статистика", callback_data="a:stats")],
-            [InlineKeyboardButton("📣 Рассылка", callback_data="a:broadcast")],
+            [InlineKeyboardButton("📣 Новая рассылка", callback_data="a:broadcast")],
+            [InlineKeyboardButton("📋 История рассылок", callback_data="a:bc_list")],
             [InlineKeyboardButton("🔄 Обновить сайт", callback_data="a:refresh")],
             [InlineKeyboardButton("К меню 🔙", callback_data="m:home")],
         ]
@@ -189,6 +190,45 @@ def broadcast_confirm_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("✅ Отправить всем", callback_data="a:bc_send"),
                 InlineKeyboardButton("❌ Отмена", callback_data="a:bc_cancel"),
             ]
+        ]
+    )
+
+
+def broadcasts_list_keyboard(items: list[dict]) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for b in items[:12]:
+        bid = b["id"]
+        stamp = (b.get("created_at") or "")[:16]
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    f"#{bid} · {stamp}",
+                    callback_data=f"a:bc_view:{bid}",
+                )
+            ]
+        )
+    rows.append([InlineKeyboardButton("📣 Новая", callback_data="a:broadcast")])
+    rows.append([InlineKeyboardButton("« Админка", callback_data="a:home")])
+    return InlineKeyboardMarkup(rows)
+
+
+def broadcast_item_keyboard(broadcast_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "🔁 Разослать снова",
+                    callback_data=f"a:bc_resend:{broadcast_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🗑 Удалить",
+                    callback_data=f"a:bc_del:{broadcast_id}",
+                )
+            ],
+            [InlineKeyboardButton("« История", callback_data="a:bc_list")],
+            [InlineKeyboardButton("« Админка", callback_data="a:home")],
         ]
     )
 

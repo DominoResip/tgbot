@@ -295,7 +295,22 @@ def menu_text(chat: Chat) -> str:
     return "\n".join(lines)
 
 
-def format_stats(chats: list[Chat], *, archive_rows: int = 0) -> str:
+def format_stats(
+    chats: list[Chat],
+    *,
+    archive_rows: int = 0,
+    active_7d: int | None = None,
+    active_30d: int | None = None,
+    last_poll: str = "",
+    site_labels: dict[str, str] | None = None,
+) -> str:
+    """
+    «Чаты» = записи в БД.
+    Личные чаты ≈ отдельные пользователи Telegram.
+    Группы = Telegram-группы/супергруппы (не учебные группы).
+    """
+    from collections import Counter
+
     privates = [c for c in chats if c.chat_type == "private"]
     groups = [c for c in chats if c.chat_type in {"group", "supergroup"}]
     with_entity = [c for c in chats if c.entity_id]
@@ -303,27 +318,55 @@ def format_stats(chats: list[Chat], *, archive_rows: int = 0) -> str:
     morning = [c for c in chats if c.flag("notify_morning") and c.entity_id]
     c1 = [c for c in with_entity if c.corpus == "1"]
     c2 = [c for c in with_entity if c.corpus == "2"]
-    members_off = [
-        c for c in groups if not c.flag("allow_members")
-    ]
+    members_off = [c for c in groups if not c.flag("allow_members")]
+
+    # Top study groups among chats that chose kind=group
+    top = Counter(
+        (c.corpus or "1", c.entity_name)
+        for c in with_entity
+        if c.entity_kind == "group" and c.entity_name
+    )
 
     lines = [
         "📊 <b>Статистика бота</b>",
         "",
-        f"Всего чатов: <b>{len(chats)}</b>",
-        f"· личных: <b>{len(privates)}</b>",
-        f"· групп: <b>{len(groups)}</b>",
-        f"С выбранной группой/преподавателем: <b>{len(with_entity)}</b>",
-        f"· 1 корпус: <b>{len(c1)}</b> · 2 корпус: <b>{len(c2)}</b>",
-        f"Уведомления об изменениях: <b>{len(notify)}</b>",
-        f"Утренние сообщения: <b>{len(morning)}</b>",
-        f"Групп с закрытым доступом для участников: <b>{len(members_off)}</b>",
-        f"Архив дней в БД: <b>{archive_rows}</b>",
+        f"Всего чатов в базе: <b>{len(chats)}</b>",
+        f"· пользователей (личные): <b>{len(privates)}</b>",
+        f"· Telegram-групп: <b>{len(groups)}</b>",
     ]
+    if active_7d is not None or active_30d is not None:
+        lines.append(
+            f"Активны за 7 / 30 дней: <b>{active_7d if active_7d is not None else '—'}</b>"
+            f" / <b>{active_30d if active_30d is not None else '—'}</b>"
+        )
+    lines.extend(
+        [
+            f"Выбрана учебная группа/препод/ауд.: <b>{len(with_entity)}</b>",
+            f"· 1 корпус: <b>{len(c1)}</b> · 2 корпус: <b>{len(c2)}</b>",
+            f"Уведомления об изменениях: <b>{len(notify)}</b>",
+            f"Утренние сообщения: <b>{len(morning)}</b>",
+            f"Групп с закрытым доступом: <b>{len(members_off)}</b>",
+            f"Архив дней в БД: <b>{archive_rows}</b>",
+            f"Интервал опроса сайта: <b>{config.POLL_SECONDS}</b> с",
+        ]
+    )
+    if last_poll:
+        lines.append(f"Последний опрос: <code>{escape(last_poll)}</code>")
+    if site_labels:
+        for cid, label in site_labels.items():
+            short = config.corpus_meta(cid)["short"]
+            lines.append(f"Сайт {short}: <code>{escape(label or '—')}</code>")
+
+    if top:
+        lines.append("")
+        lines.append("<b>Топ учебных групп</b> (по числу чатов)")
+        for (corp, name), n in top.most_common(10):
+            short = config.corpus_meta(corp)["short"]
+            lines.append(f"· {short} <b>{escape(name)}</b> — {n}")
 
     if groups:
         lines.append("")
-        lines.append("<b>Группы</b>")
+        lines.append("<b>Telegram-группы</b>")
         for c in groups[:25]:
             title = escape(c.title or str(c.chat_id))
             who = escape(c.entity_name or "—")

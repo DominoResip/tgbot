@@ -405,14 +405,29 @@ async def cmd_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await open_menu(update, context)
 
 
+def _stats_text() -> str:
+    act = store.active_chat_counts()
+    site_labels = {
+        cid: (svc.updated_label or store.get_meta(f"updated:{cid}") or "")
+        for cid, svc in hub.services.items()
+    }
+    return fmt.format_stats(
+        store.all_chats(),
+        archive_rows=store.archive_count(),
+        active_7d=act.get("active_7d"),
+        active_30d=act.get("active_30d"),
+        last_poll=store.get_meta("last_poll") or "",
+        site_labels=site_labels,
+    )
+
+
 async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     if not user or user.id not in config.ADMIN_IDS:
         if update.message:
             await update.message.reply_text("Команда только для администратора бота.")
         return
-    text = fmt.format_stats(store.all_chats(), archive_rows=store.archive_count())
-    await _send(update, text)
+    await _send(update, _stats_text())
 
 
 async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -459,12 +474,17 @@ async def cmd_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
 
-async def _run_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def _run_broadcast(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    body: str | None = None,
+) -> None:
     import asyncio
 
     from telegram.error import Forbidden, TelegramError
 
-    draft = (context.user_data.get("broadcast_draft") or "").strip()
+    draft = (body if body is not None else context.user_data.get("broadcast_draft") or "").strip()
     if not draft:
         await _send(update, "Нет текста для рассылки. /broadcast")
         return
@@ -473,6 +493,7 @@ async def _run_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     fail = 0
     await _send(update, f"📣 Рассылка… получателей: {len(chats)}")
     bot = context.bot
+    delay = config.NOTIFY_SEND_DELAY if config.NOTIFY_SEND_DELAY > 0 else 0.05
     for c in chats:
         try:
             await bot.send_message(
@@ -487,7 +508,14 @@ async def _run_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         except Exception:
             fail += 1
             log.exception("broadcast to %s failed", c.chat_id)
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(delay)
+    admin = update.effective_user
+    store.save_broadcast(
+        draft,
+        admin_id=admin.id if admin else 0,
+        ok_count=ok,
+        fail_count=fail,
+    )
     context.user_data.pop("broadcast_draft", None)
     context.user_data.pop("await_broadcast", None)
     await _send(
@@ -587,11 +615,22 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             await _send(update, "Только для администратора бота.")
             return
         action = data[2:]
-        if action == "stats":
-            text = fmt.format_stats(
-                store.all_chats(), archive_rows=store.archive_count()
+        if action == "home":
+            n = store.chat_count()
+            await _send(
+                update,
+                f"🛠 <b>Админка</b>\nЧатов в базе: <b>{n}</b>\nВыберите действие:",
+                markup=kb.admin_keyboard(),
+                edit=True,
             )
-            await _send(update, text, markup=kb.admin_keyboard(), edit=True)
+            return
+        if action == "stats":
+            await _send(
+                update,
+                _stats_text(),
+                markup=kb.admin_keyboard(),
+                edit=True,
+            )
             return
         if action == "refresh":
             try:
@@ -615,6 +654,72 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             await _send(
                 update,
                 "📣 Пришлите текст рассылки одним сообщением.\nОтмена: /admin",
+            )
+            return
+        if action == "bc_list":
+            items = store.list_broadcasts(15)
+            if not items:
+                await _send(
+                    update,
+                    "История рассылок пуста.",
+                    markup=kb.admin_keyboard(),
+                    edit=True,
+                )
+                return
+            lines = ["📋 <b>История рассылок</b> (последние):\n"]
+            for b in items:
+                preview = (b["body"] or "").replace("\n", " ")
+                if len(preview) > 60:
+                    preview = preview[:57] + "…"
+                lines.append(
+                    f"#{b['id']} · {b.get('created_at') or '—'}\n"
+                    f"✓{b['ok_count']} ✗{b['fail_count']} · {fmt.escape(preview)}"
+                )
+            await _send(
+                update,
+                "\n\n".join(lines),
+                markup=kb.broadcasts_list_keyboard(items),
+                edit=True,
+            )
+            return
+        if action.startswith("bc_view:"):
+            bid = int(action.split(":", 1)[1])
+            b = store.get_broadcast(bid)
+            if not b:
+                await _send(update, "Рассылка не найдена.", markup=kb.admin_keyboard())
+                return
+            text = (
+                f"📣 <b>Рассылка #{b['id']}</b>\n"
+                f"{b.get('created_at') or '—'}\n"
+                f"Доставлено: <b>{b['ok_count']}</b> · ошибок: <b>{b['fail_count']}</b>\n\n"
+                f"{b['body']}"
+            )
+            await _send(
+                update,
+                text,
+                markup=kb.broadcast_item_keyboard(bid),
+                edit=True,
+            )
+            return
+        if action.startswith("bc_resend:"):
+            bid = int(action.split(":", 1)[1])
+            b = store.get_broadcast(bid)
+            if not b:
+                await _send(update, "Рассылка не найдена.", markup=kb.admin_keyboard())
+                return
+            await _run_broadcast(update, context, body=b["body"])
+            return
+        if action.startswith("bc_del:"):
+            bid = int(action.split(":", 1)[1])
+            store.delete_broadcast(bid)
+            items = store.list_broadcasts(15)
+            await _send(
+                update,
+                f"🗑 Рассылка #{bid} удалена.",
+                markup=kb.broadcasts_list_keyboard(items)
+                if items
+                else kb.admin_keyboard(),
+                edit=True,
             )
             return
         if action == "bc_send":

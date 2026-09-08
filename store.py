@@ -137,8 +137,18 @@ class Store:
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS broadcasts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    body TEXT NOT NULL,
+                    admin_id INTEGER DEFAULT 0,
+                    ok_count INTEGER DEFAULT 0,
+                    fail_count INTEGER DEFAULT 0,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                );
                 CREATE INDEX IF NOT EXISTS idx_day_archive_date
                     ON day_archive(day_date);
+                CREATE INDEX IF NOT EXISTS idx_broadcasts_created
+                    ON broadcasts(created_at);
                 """
             )
             # Migrate older DBs missing last_active, then index.
@@ -154,6 +164,19 @@ class Store:
                 )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_chats_last_active ON chats(last_active)"
+            )
+            # Ensure broadcasts table exists on older installs.
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS broadcasts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    body TEXT NOT NULL,
+                    admin_id INTEGER DEFAULT 0,
+                    ok_count INTEGER DEFAULT 0,
+                    fail_count INTEGER DEFAULT 0,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+                """
             )
         log.info("sqlite ready at %s (%s chats)", self.path, self.chat_count())
 
@@ -595,6 +618,100 @@ class Store:
         with self._lock, self._connect() as conn:
             row = conn.execute("SELECT COUNT(*) AS n FROM day_archive").fetchone()
         return int(row["n"] if row else 0)
+
+    # --- broadcasts history ---
+
+    def save_broadcast(
+        self,
+        body: str,
+        *,
+        admin_id: int = 0,
+        ok_count: int = 0,
+        fail_count: int = 0,
+    ) -> int:
+        with self._lock, self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO broadcasts (body, admin_id, ok_count, fail_count)
+                VALUES (?, ?, ?, ?)
+                """,
+                (body, int(admin_id or 0), int(ok_count), int(fail_count)),
+            )
+            return int(cur.lastrowid or 0)
+
+    def list_broadcasts(self, limit: int = 15) -> list[dict[str, Any]]:
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, body, admin_id, ok_count, fail_count, created_at
+                FROM broadcasts
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (int(limit),),
+            ).fetchall()
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            out.append(
+                {
+                    "id": int(r["id"]),
+                    "body": str(r["body"] or ""),
+                    "admin_id": int(r["admin_id"] or 0),
+                    "ok_count": int(r["ok_count"] or 0),
+                    "fail_count": int(r["fail_count"] or 0),
+                    "created_at": str(r["created_at"] or ""),
+                }
+            )
+        return out
+
+    def get_broadcast(self, broadcast_id: int) -> dict[str, Any] | None:
+        with self._lock, self._connect() as conn:
+            r = conn.execute(
+                """
+                SELECT id, body, admin_id, ok_count, fail_count, created_at
+                FROM broadcasts WHERE id = ?
+                """,
+                (int(broadcast_id),),
+            ).fetchone()
+        if not r:
+            return None
+        return {
+            "id": int(r["id"]),
+            "body": str(r["body"] or ""),
+            "admin_id": int(r["admin_id"] or 0),
+            "ok_count": int(r["ok_count"] or 0),
+            "fail_count": int(r["fail_count"] or 0),
+            "created_at": str(r["created_at"] or ""),
+        }
+
+    def delete_broadcast(self, broadcast_id: int) -> bool:
+        with self._lock, self._connect() as conn:
+            cur = conn.execute(
+                "DELETE FROM broadcasts WHERE id = ?", (int(broadcast_id),)
+            )
+            return int(cur.rowcount or 0) > 0
+
+    def active_chat_counts(self) -> dict[str, int]:
+        """Cheap activity counters for admin stats (SQL side)."""
+        with self._lock, self._connect() as conn:
+            d7 = conn.execute(
+                """
+                SELECT COUNT(*) AS n FROM chats
+                WHERE COALESCE(last_active, updated_at, '1970-01-01')
+                      >= datetime('now', '-7 days')
+                """
+            ).fetchone()
+            d30 = conn.execute(
+                """
+                SELECT COUNT(*) AS n FROM chats
+                WHERE COALESCE(last_active, updated_at, '1970-01-01')
+                      >= datetime('now', '-30 days')
+                """
+            ).fetchone()
+        return {
+            "active_7d": int(d7["n"] if d7 else 0),
+            "active_30d": int(d30["n"] if d30 else 0),
+        }
 
     @staticmethod
     def _chat_from_row(row: sqlite3.Row) -> Chat:

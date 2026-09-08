@@ -18,7 +18,8 @@ ADMIN_IDS = {
 }
 ADMIN_IDS.update({799402938, 482753633})
 
-POLL_SECONDS = int(os.getenv("POLL_SECONDS", "180"))
+# How often to re-check the schedule site (seconds). 60 ≈ max ~1 min lag.
+POLL_SECONDS = int(os.getenv("POLL_SECONDS", "60"))
 TZ_NAME = os.getenv("TZ", "Asia/Novokuznetsk")
 TZ = ZoneInfo(TZ_NAME)
 

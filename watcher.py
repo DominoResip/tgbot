@@ -79,9 +79,15 @@ async def bootstrap(hub: ScheduleHub, store: Store) -> bool:
 
 
 async def poll_changes(hub: ScheduleHub, store: Store, bot: Bot) -> None:
+    from datetime import datetime
+
     bootstrapped = store.get_meta("bootstrapped") == "1"
     try:
         changes = await hub.refresh_all()
+        store.set_meta(
+            "last_poll",
+            datetime.now(config.TZ).strftime("%Y-%m-%d %H:%M:%S %Z"),
+        )
     except Exception:
         log.exception("schedule poll failed")
         return

@@ -275,11 +275,16 @@ async def show_day(
 
 def _remember_entity(chat_id: int, ent, corpus: str) -> None:
     store.set_entity(chat_id, ent.id, ent.name, ent.kind)
-    # Auto-add groups only if there is free favorite slot (never silently drop teachers/rooms).
-    if ent.kind == "group":
-        store.add_favorite(
-            chat_id, ent.id, ent.name, ent.kind, corpus=corpus, evict=False
-        )
+    # Auto-add group / teacher / room if there is a free favorite slot
+    # (never silently drop existing favorites).
+    store.add_favorite(
+        chat_id,
+        ent.id,
+        ent.name,
+        ent.kind or "group",
+        corpus=corpus,
+        evict=False,
+    )
 
 
 async def ensure_schedule_loaded(update: Update, chat) -> bool:

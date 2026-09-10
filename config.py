@@ -98,6 +98,11 @@ FETCH_TIMEOUT = float(os.getenv("FETCH_TIMEOUT", "90"))
 FETCH_RETRIES = int(os.getenv("FETCH_RETRIES", "4"))
 BOOTSTRAP_RETRIES = int(os.getenv("BOOTSTRAP_RETRIES", "5"))
 
+# Donation / hosting support (YooKassa payment link or page URL).
+# When empty, the menu shows the text without a pay button.
+DONATION_URL = os.getenv("DONATION_URL", "").strip()
+DONATION_TITLE = os.getenv("DONATION_TITLE", "Поддержать хостинг").strip()
+
 
 def corpus_meta(corpus_id: str) -> dict:
     return CORPORA.get(corpus_id) or CORPORA["1"]

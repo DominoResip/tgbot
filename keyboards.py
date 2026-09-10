@@ -124,8 +124,25 @@ def menu_keyboard(chat: Chat) -> InlineKeyboardMarkup:
             [InlineKeyboardButton("🔎 Быстрый поиск", callback_data="m:search")],
             [InlineKeyboardButton("⭐ Избранное", callback_data="m:favs")],
             [InlineKeyboardButton("⚙️ Настройки", callback_data="m:set")],
+            [InlineKeyboardButton("💙 Поддержать хостинг", callback_data="m:donate")],
         ]
     )
+
+
+def donate_keyboard() -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    url = (config.DONATION_URL or "").strip()
+    if url:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    config.DONATION_TITLE or "Оплатить через ЮKassa",
+                    url=url,
+                )
+            ]
+        )
+    rows.append([InlineKeyboardButton("К меню 🔙", callback_data="m:home")])
+    return InlineKeyboardMarkup(rows)
 
 
 def favorites_keyboard(chat: Chat) -> InlineKeyboardMarkup:

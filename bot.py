@@ -865,6 +865,14 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             edit=True,
         )
         return
+    if data == "m:donate":
+        await _send(
+            update,
+            fmt.donate_text(),
+            markup=kb.donate_keyboard(),
+            edit=True,
+        )
+        return
 
     if data.startswith("k:"):
         if not await _can_pick(update, context):

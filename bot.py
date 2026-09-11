@@ -413,6 +413,17 @@ async def cmd_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await open_menu(update, context)
 
 
+async def cmd_donate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    ensure(update)
+    if not await _can_use(update, context):
+        return
+    await _send(
+        update,
+        fmt.donate_text(),
+        markup=kb.donate_keyboard(),
+    )
+
+
 def _stats_text() -> str:
     act = store.active_chat_counts()
     site_labels = {
@@ -462,37 +473,37 @@ async def cmd_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     ensure(update)
     args = (update.message.text or "").split(maxsplit=1) if update.message else []
     if len(args) > 1 and args[1].strip():
-        context.user_data["broadcast_draft"] = args[1].strip()
         context.user_data.pop("await_broadcast", None)
-        pay_note = (
-            "\n\n<i>К сообщению будет прикреплена кнопка оплаты "
-            "(DONATION_URL из .env).</i>"
-            if config.DONATION_URL
-            else "\n\n<i>Кнопки оплаты нет: в .env не задан DONATION_URL.</i>"
-        )
-        await _send(
-            update,
-            "📣 <b>Черновик рассылки</b>\n\n"
-            + args[1].strip()
-            + f"\n\nПолучателей: <b>{store.chat_count()}</b>"
-            + pay_note,
-            markup=kb.broadcast_confirm_keyboard(),
-        )
+        await _preview_broadcast(update, context, args[1].strip())
         return
     context.user_data["await_broadcast"] = True
     context.user_data.pop("broadcast_draft", None)
-    pay_hint = (
-        "К каждому сообщению добавится кнопка «Поддержать хостинг», "
-        "если в .env задан DONATION_URL.\n"
-        if config.DONATION_URL
-        else "Кнопка оплаты пока не подключится: задайте DONATION_URL в .env.\n"
-    )
     await _send(
         update,
         "📣 Пришлите текст рассылки одним сообщением.\n"
         "Можно HTML: <code>&lt;b&gt;жирный&lt;/b&gt;</code>.\n"
-        + pay_hint
-        + "Отмена: /admin",
+        "К каждому сообщению добавится кнопка «💙 Поддержать хостинг» "
+        "(откроет меню поддержки в боте).\n"
+        "Отмена: /admin",
+    )
+
+
+async def _preview_broadcast(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    text: str,
+) -> None:
+    """Show recipient-style preview + confirm controls."""
+    context.user_data["broadcast_draft"] = text
+    # As recipients will see it (with support button).
+    await _send(update, text, markup=kb.broadcast_donate_keyboard())
+    await _send(
+        update,
+        "👆 <b>Предпросмотр</b> — так сообщение увидят получатели.\n"
+        f"Получателей: <b>{store.chat_count()}</b>\n"
+        "Кнопка «Поддержать хостинг» откроет меню поддержки в боте "
+        "(не сразу страницу оплаты).",
+        markup=kb.broadcast_confirm_keyboard(),
     )
 
 
@@ -514,8 +525,10 @@ async def _run_broadcast(
     ok = 0
     fail = 0
     pay_kb = kb.broadcast_donate_keyboard()
-    note = " + кнопка «Поддержать хостинг»" if pay_kb else ""
-    await _send(update, f"📣 Рассылка… получателей: {len(chats)}{note}")
+    await _send(
+        update,
+        f"📣 Рассылка… получателей: {len(chats)} + кнопка «Поддержать хостинг»",
+    )
     bot = context.bot
     delay = config.NOTIFY_SEND_DELAY if config.NOTIFY_SEND_DELAY > 0 else 0.05
     for c in chats:
@@ -985,21 +998,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         and context.user_data.get("await_broadcast")
     ):
         context.user_data["await_broadcast"] = False
-        context.user_data["broadcast_draft"] = text
-        pay_note = (
-            "\n\n<i>К сообщению будет прикреплена кнопка оплаты "
-            "(DONATION_URL из .env).</i>"
-            if config.DONATION_URL
-            else "\n\n<i>Кнопки оплаты нет: в .env не задан DONATION_URL.</i>"
-        )
-        await _send(
-            update,
-            "📣 <b>Черновик рассылки</b>\n\n"
-            + text
-            + f"\n\nПолучателей: <b>{store.chat_count()}</b>"
-            + pay_note,
-            markup=kb.broadcast_confirm_keyboard(),
-        )
+        await _preview_broadcast(update, context, text)
         return
 
     # Private reply-keyboard shortcuts
@@ -1103,6 +1102,7 @@ async def on_startup(app: Application) -> None:
                 BotCommand("start", "Запуск"),
                 BotCommand("menu", "Меню"),
                 BotCommand("help", "Справка"),
+                BotCommand("donate", "Поддержать хостинг"),
             ]
         )
     except Exception:
@@ -1146,6 +1146,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("menu", cmd_menu))
     app.add_handler(CommandHandler("help", cmd_help))
+    app.add_handler(CommandHandler("donate", cmd_donate))
     app.add_handler(CommandHandler("admin", cmd_admin))
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("broadcast", cmd_broadcast))

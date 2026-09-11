@@ -149,17 +149,17 @@ def donate_keyboard(*, with_back: bool = True) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
-def broadcast_donate_keyboard() -> InlineKeyboardMarkup | None:
-    """Inline pay button for mass broadcasts (no back-to-menu)."""
-    url = (config.DONATION_URL or "").strip()
-    if not url:
-        return None
+def broadcast_donate_keyboard() -> InlineKeyboardMarkup:
+    """
+    Button under mass-broadcast messages.
+    Opens in-bot support menu (m:donate), not the payment URL directly.
+    """
     return InlineKeyboardMarkup(
         [
             [
                 InlineKeyboardButton(
-                    config.DONATION_TITLE or "💙 Поддержать хостинг",
-                    url=url,
+                    "💙 Поддержать хостинг",
+                    callback_data="m:donate",
                 )
             ]
         ]

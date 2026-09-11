@@ -129,20 +129,41 @@ def menu_keyboard(chat: Chat) -> InlineKeyboardMarkup:
     )
 
 
-def donate_keyboard() -> InlineKeyboardMarkup:
+def donate_keyboard(*, with_back: bool = True) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     url = (config.DONATION_URL or "").strip()
     if url:
         rows.append(
             [
                 InlineKeyboardButton(
-                    config.DONATION_TITLE or "Оплатить через ЮKassa",
+                    config.DONATION_TITLE or "💙 Оплатить в CloudTips",
                     url=url,
                 )
             ]
         )
-    rows.append([InlineKeyboardButton("К меню 🔙", callback_data="m:home")])
+    rows.append(
+        [InlineKeyboardButton("📷 Показать QR-код", callback_data="m:donate_qr")]
+    )
+    if with_back:
+        rows.append([InlineKeyboardButton("К меню 🔙", callback_data="m:home")])
     return InlineKeyboardMarkup(rows)
+
+
+def broadcast_donate_keyboard() -> InlineKeyboardMarkup | None:
+    """Inline pay button for mass broadcasts (no back-to-menu)."""
+    url = (config.DONATION_URL or "").strip()
+    if not url:
+        return None
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    config.DONATION_TITLE or "💙 Поддержать хостинг",
+                    url=url,
+                )
+            ]
+        ]
+    )
 
 
 def favorites_keyboard(chat: Chat) -> InlineKeyboardMarkup:

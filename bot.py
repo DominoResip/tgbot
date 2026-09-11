@@ -464,21 +464,35 @@ async def cmd_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if len(args) > 1 and args[1].strip():
         context.user_data["broadcast_draft"] = args[1].strip()
         context.user_data.pop("await_broadcast", None)
+        pay_note = (
+            "\n\n<i>К сообщению будет прикреплена кнопка оплаты "
+            "(DONATION_URL из .env).</i>"
+            if config.DONATION_URL
+            else "\n\n<i>Кнопки оплаты нет: в .env не задан DONATION_URL.</i>"
+        )
         await _send(
             update,
             "📣 <b>Черновик рассылки</b>\n\n"
             + args[1].strip()
-            + f"\n\nПолучателей: <b>{store.chat_count()}</b>",
+            + f"\n\nПолучателей: <b>{store.chat_count()}</b>"
+            + pay_note,
             markup=kb.broadcast_confirm_keyboard(),
         )
         return
     context.user_data["await_broadcast"] = True
     context.user_data.pop("broadcast_draft", None)
+    pay_hint = (
+        "К каждому сообщению добавится кнопка «Поддержать хостинг», "
+        "если в .env задан DONATION_URL.\n"
+        if config.DONATION_URL
+        else "Кнопка оплаты пока не подключится: задайте DONATION_URL в .env.\n"
+    )
     await _send(
         update,
         "📣 Пришлите текст рассылки одним сообщением.\n"
         "Можно HTML: <code>&lt;b&gt;жирный&lt;/b&gt;</code>.\n"
-        "Отмена: /admin",
+        + pay_hint
+        + "Отмена: /admin",
     )
 
 
@@ -499,7 +513,9 @@ async def _run_broadcast(
     chats = store.all_chats()
     ok = 0
     fail = 0
-    await _send(update, f"📣 Рассылка… получателей: {len(chats)}")
+    pay_kb = kb.broadcast_donate_keyboard()
+    note = " + кнопка «Поддержать хостинг»" if pay_kb else ""
+    await _send(update, f"📣 Рассылка… получателей: {len(chats)}{note}")
     bot = context.bot
     delay = config.NOTIFY_SEND_DELAY if config.NOTIFY_SEND_DELAY > 0 else 0.05
     for c in chats:
@@ -509,6 +525,7 @@ async def _run_broadcast(
                 draft,
                 parse_mode=ParseMode.HTML,
                 disable_web_page_preview=True,
+                reply_markup=pay_kb,
             )
             ok += 1
         except (Forbidden, TelegramError):
@@ -873,6 +890,44 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             edit=True,
         )
         return
+    if data == "m:donate_qr":
+        from pathlib import Path
+
+        from telegram import InputFile
+
+        qr_path = Path(config.DONATION_QR_PATH)
+        if not qr_path.is_file():
+            await _send(
+                update,
+                "QR-код пока недоступен. Воспользуйтесь кнопкой оплаты CloudTips.",
+                markup=kb.donate_keyboard(),
+            )
+            return
+        chat_id = update.effective_chat.id if update.effective_chat else None
+        if chat_id is None:
+            return
+        caption = (
+            "📷 <b>QR для поддержки хостинга</b>\n"
+            "Отсканируйте камерой или приложением банка.\n"
+            f"Либо откройте ссылку: {config.DONATION_URL or 'CloudTips'}"
+        )
+        try:
+            with qr_path.open("rb") as f:
+                await context.bot.send_photo(
+                    chat_id=chat_id,
+                    photo=InputFile(f, filename="qr_cloudtips.png"),
+                    caption=caption,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=kb.donate_keyboard(with_back=True),
+                )
+        except Exception:
+            log.exception("donate QR send failed")
+            await _send(
+                update,
+                "Не удалось отправить QR. Откройте оплату кнопкой CloudTips.",
+                markup=kb.donate_keyboard(),
+            )
+        return
 
     if data.startswith("k:"):
         if not await _can_pick(update, context):
@@ -931,11 +986,18 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     ):
         context.user_data["await_broadcast"] = False
         context.user_data["broadcast_draft"] = text
+        pay_note = (
+            "\n\n<i>К сообщению будет прикреплена кнопка оплаты "
+            "(DONATION_URL из .env).</i>"
+            if config.DONATION_URL
+            else "\n\n<i>Кнопки оплаты нет: в .env не задан DONATION_URL.</i>"
+        )
         await _send(
             update,
             "📣 <b>Черновик рассылки</b>\n\n"
             + text
-            + f"\n\nПолучателей: <b>{store.chat_count()}</b>",
+            + f"\n\nПолучателей: <b>{store.chat_count()}</b>"
+            + pay_note,
             markup=kb.broadcast_confirm_keyboard(),
         )
         return

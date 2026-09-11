@@ -98,10 +98,18 @@ FETCH_TIMEOUT = float(os.getenv("FETCH_TIMEOUT", "90"))
 FETCH_RETRIES = int(os.getenv("FETCH_RETRIES", "4"))
 BOOTSTRAP_RETRIES = int(os.getenv("BOOTSTRAP_RETRIES", "5"))
 
-# Donation / hosting support (YooKassa payment link or page URL).
+# Donation / hosting support (CloudTips link).
 # When empty, the menu shows the text without a pay button.
-DONATION_URL = os.getenv("DONATION_URL", "").strip()
-DONATION_TITLE = os.getenv("DONATION_TITLE", "Поддержать хостинг").strip()
+DONATION_URL = os.getenv(
+    "DONATION_URL", "https://pay.cloudtips.ru/p/400fcaae"
+).strip()
+DONATION_TITLE = os.getenv(
+    "DONATION_TITLE", "💙 Поддержать через CloudTips"
+).strip()
+# QR image for offline / camera payment (path relative to project root).
+DONATION_QR_PATH = os.getenv(
+    "DONATION_QR_PATH", str(ROOT / "assets" / "qr_cloudtips.png")
+).strip()
 
 
 def corpus_meta(corpus_id: str) -> dict:

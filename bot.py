@@ -525,15 +525,32 @@ async def _run_broadcast(
     ok = 0
     fail = 0
     pay_kb = kb.broadcast_donate_keyboard()
+    delay = (
+        config.BROADCAST_SEND_DELAY
+        if getattr(config, "BROADCAST_SEND_DELAY", 0) > 0
+        else 0.6
+    )
+    eta_min = int(len(chats) * delay / 60) + 1
     await _send(
         update,
-        f"📣 Рассылка… получателей: {len(chats)} + кнопка «Поддержать хостинг»",
+        f"📣 Рассылка… получателей: {len(chats)}\n"
+        f"Пауза между сообщениями: <b>{delay:.1f}</b> с "
+        f"(~{eta_min} мин).\n"
+        "Кнопка «Поддержать хостинг» будет у каждого сообщения.\n"
+        "Message id сохраняются — рассылку можно будет удалить у получателей.",
+    )
+    admin = update.effective_user
+    # Create history row first so we can attach deliveries while sending.
+    bc_id = store.save_broadcast(
+        draft,
+        admin_id=admin.id if admin else 0,
+        ok_count=0,
+        fail_count=0,
     )
     bot = context.bot
-    delay = config.NOTIFY_SEND_DELAY if config.NOTIFY_SEND_DELAY > 0 else 0.05
     for c in chats:
         try:
-            await bot.send_message(
+            msg = await bot.send_message(
                 c.chat_id,
                 draft,
                 parse_mode=ParseMode.HTML,
@@ -541,25 +558,81 @@ async def _run_broadcast(
                 reply_markup=pay_kb,
             )
             ok += 1
+            if msg and msg.message_id:
+                store.save_broadcast_delivery(bc_id, c.chat_id, msg.message_id)
         except (Forbidden, TelegramError):
             fail += 1
         except Exception:
             fail += 1
             log.exception("broadcast to %s failed", c.chat_id)
         await asyncio.sleep(delay)
-    admin = update.effective_user
-    store.save_broadcast(
-        draft,
-        admin_id=admin.id if admin else 0,
-        ok_count=ok,
-        fail_count=fail,
-    )
+    # Update counters on the history row.
+    with store._lock, store._connect() as conn:
+        conn.execute(
+            """
+            UPDATE broadcasts SET ok_count = ?, fail_count = ?
+            WHERE id = ?
+            """,
+            (ok, fail, bc_id),
+        )
     context.user_data.pop("broadcast_draft", None)
     context.user_data.pop("await_broadcast", None)
     await _send(
         update,
-        f"✅ Рассылка завершена.\nДоставлено: <b>{ok}</b>\nОшибок: <b>{fail}</b>",
+        f"✅ Рассылка <b>#{bc_id}</b> завершена.\n"
+        f"Доставлено: <b>{ok}</b>\nОшибок: <b>{fail}</b>\n"
+        "Удалить у получателей: Админка → История рассылок → эта рассылка.",
         markup=kb.admin_keyboard(),
+    )
+
+
+async def _purge_broadcast_messages(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    broadcast_id: int,
+) -> None:
+    """Delete broadcast messages from recipient chats (needs saved message_ids)."""
+    import asyncio
+
+    from telegram.error import Forbidden, TelegramError
+
+    deliveries = store.list_broadcast_deliveries(broadcast_id)
+    if not deliveries:
+        await _send(
+            update,
+            "Для этой рассылки нет сохранённых message_id "
+            "(старая рассылка до обновления или ничего не ушло).\n"
+            "Удалить такие сообщения через бота уже нельзя.",
+            markup=kb.broadcast_item_keyboard(broadcast_id),
+        )
+        return
+    await _send(
+        update,
+        f"🧹 Удаляю сообщения рассылки #{broadcast_id} "
+        f"у <b>{len(deliveries)}</b> чатов…",
+    )
+    bot = context.bot
+    deleted = 0
+    fail = 0
+    delay = (
+        config.BROADCAST_SEND_DELAY
+        if getattr(config, "BROADCAST_SEND_DELAY", 0) > 0
+        else 0.35
+    )
+    for chat_id, message_id in deliveries:
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=message_id)
+            deleted += 1
+        except (Forbidden, TelegramError):
+            fail += 1
+        except Exception:
+            fail += 1
+        await asyncio.sleep(min(delay, 0.4))
+    await _send(
+        update,
+        f"Готово по рассылке #{broadcast_id}.\n"
+        f"Удалено: <b>{deleted}</b>\nНе удалось: <b>{fail}</b>",
+        markup=kb.broadcast_item_keyboard(broadcast_id),
     )
 
 
@@ -754,10 +827,13 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             if not b:
                 await _send(update, "Рассылка не найдена.", markup=kb.admin_keyboard())
                 return
+            n_msg = store.broadcast_delivery_count(bid)
             text = (
                 f"📣 <b>Рассылка #{b['id']}</b>\n"
                 f"{b.get('created_at') or '—'}\n"
-                f"Доставлено: <b>{b['ok_count']}</b> · ошибок: <b>{b['fail_count']}</b>\n\n"
+                f"Доставлено: <b>{b['ok_count']}</b> · ошибок: <b>{b['fail_count']}</b>\n"
+                f"Сохранено message_id: <b>{n_msg}</b> "
+                f"{'(можно удалить у получателей)' if n_msg else '(удалить у получателей нельзя)'}\n\n"
                 f"{b['body']}"
             )
             await _send(
@@ -775,13 +851,17 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 return
             await _run_broadcast(update, context, body=b["body"])
             return
+        if action.startswith("bc_purge:"):
+            bid = int(action.split(":", 1)[1])
+            await _purge_broadcast_messages(update, context, bid)
+            return
         if action.startswith("bc_del:"):
             bid = int(action.split(":", 1)[1])
             store.delete_broadcast(bid)
             items = store.list_broadcasts(15)
             await _send(
                 update,
-                f"🗑 Рассылка #{bid} удалена.",
+                f"🗑 Рассылка #{bid} убрана из истории.",
                 markup=kb.broadcasts_list_keyboard(items)
                 if items
                 else kb.admin_keyboard(),

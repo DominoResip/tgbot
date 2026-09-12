@@ -183,6 +183,22 @@ class Store:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS broadcast_deliveries (
+                    broadcast_id INTEGER NOT NULL,
+                    chat_id INTEGER NOT NULL,
+                    message_id INTEGER NOT NULL,
+                    PRIMARY KEY (broadcast_id, chat_id)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_broadcast_deliveries_bc
+                    ON broadcast_deliveries(broadcast_id)
+                """
+            )
         log.info("sqlite ready at %s (%s chats)", self.path, self.chat_count())
 
 
@@ -723,10 +739,53 @@ class Store:
 
     def delete_broadcast(self, broadcast_id: int) -> bool:
         with self._lock, self._connect() as conn:
+            conn.execute(
+                "DELETE FROM broadcast_deliveries WHERE broadcast_id = ?",
+                (int(broadcast_id),),
+            )
             cur = conn.execute(
                 "DELETE FROM broadcasts WHERE id = ?", (int(broadcast_id),)
             )
             return int(cur.rowcount or 0) > 0
+
+    def save_broadcast_delivery(
+        self, broadcast_id: int, chat_id: int, message_id: int
+    ) -> None:
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO broadcast_deliveries (broadcast_id, chat_id, message_id)
+                VALUES (?, ?, ?)
+                ON CONFLICT(broadcast_id, chat_id) DO UPDATE SET
+                    message_id = excluded.message_id
+                """,
+                (int(broadcast_id), int(chat_id), int(message_id)),
+            )
+
+    def list_broadcast_deliveries(
+        self, broadcast_id: int
+    ) -> list[tuple[int, int]]:
+        """Return list of (chat_id, message_id) for a broadcast."""
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT chat_id, message_id FROM broadcast_deliveries
+                WHERE broadcast_id = ?
+                """,
+                (int(broadcast_id),),
+            ).fetchall()
+        return [(int(r["chat_id"]), int(r["message_id"])) for r in rows]
+
+    def broadcast_delivery_count(self, broadcast_id: int) -> int:
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS n FROM broadcast_deliveries
+                WHERE broadcast_id = ?
+                """,
+                (int(broadcast_id),),
+            ).fetchone()
+        return int(row["n"] if row else 0)
 
     def active_chat_counts(self) -> dict[str, int]:
         """Cheap activity counters for admin stats (SQL side)."""

@@ -275,7 +275,13 @@ def broadcast_item_keyboard(broadcast_id: int) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
-                    "🗑 Удалить",
+                    "🧹 Удалить у получателей",
+                    callback_data=f"a:bc_purge:{broadcast_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🗑 Убрать из истории",
                     callback_data=f"a:bc_del:{broadcast_id}",
                 )
             ],

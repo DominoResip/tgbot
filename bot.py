@@ -142,6 +142,17 @@ async def _can_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
 
 async def _can_use(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """Whether the user may interact with the bot in this chat."""
+    user = update.effective_user
+    if user and user.id not in config.ADMIN_IDS and store.is_blocked(user.id):
+        # Silent ignore for blocked users (no help to probe the bot).
+        if is_private(update) and update.message:
+            try:
+                await update.message.reply_text(
+                    "Доступ к боту ограничен. Если это ошибка — напишите администратору."
+                )
+            except Exception:
+                pass
+        return False
     if is_private(update):
         return True
     if await is_admin(update, context):
@@ -155,6 +166,32 @@ async def _can_use(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
         "Админ может включить доступ участникам в настройках.",
     )
     return False
+
+
+def _blocks_text() -> str:
+    items = store.list_blocked(50)
+    n = store.blocked_count()
+    lines = [
+        "🚫 <b>Блокировки</b>",
+        f"Всего: <b>{n}</b>",
+        "",
+        "Заблокированный не может пользоваться ботом "
+        "(личные сообщения и callback).",
+        "Чтобы заблокировать: кнопка ниже или "
+        "<code>/block 123456789 причина</code>",
+        "Разблок: <code>/unblock 123456789</code>",
+        "",
+    ]
+    if not items:
+        lines.append("Список пуст.")
+    else:
+        for b in items[:30]:
+            reason = (b.get("reason") or "—").replace("<", "")
+            lines.append(
+                f"· <code>{b['user_id']}</code> — {reason}\n"
+                f"  <i>{b.get('blocked_at') or ''}</i>"
+            )
+    return "\n".join(lines)
 
 
 def base_date(chat) -> date:
@@ -424,6 +461,52 @@ async def cmd_donate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
 
 
+async def cmd_block(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    if not user or user.id not in config.ADMIN_IDS:
+        return
+    args = (update.message.text or "").split(maxsplit=2) if update.message else []
+    if len(args) < 2:
+        await _send(
+            update,
+            "Использование: <code>/block USER_ID [причина]</code>\n"
+            "Пример: <code>/block 123456789 спам</code>",
+        )
+        return
+    try:
+        uid = int(args[1].strip())
+    except ValueError:
+        await _send(update, "USER_ID должен быть числом.")
+        return
+    if uid in config.ADMIN_IDS:
+        await _send(update, "Нельзя заблокировать администратора бота.")
+        return
+    reason = args[2].strip() if len(args) > 2 else ""
+    if store.block_user(uid, reason=reason, blocked_by=user.id):
+        await _send(update, f"🚫 Заблокирован <code>{uid}</code>")
+    else:
+        await _send(update, f"Уже заблокирован: <code>{uid}</code>")
+
+
+async def cmd_unblock(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    if not user or user.id not in config.ADMIN_IDS:
+        return
+    args = (update.message.text or "").split(maxsplit=1) if update.message else []
+    if len(args) < 2:
+        await _send(update, "Использование: <code>/unblock USER_ID</code>")
+        return
+    try:
+        uid = int(args[1].strip())
+    except ValueError:
+        await _send(update, "USER_ID должен быть числом.")
+        return
+    if store.unblock_user(uid):
+        await _send(update, f"✅ Разблокирован <code>{uid}</code>")
+    else:
+        await _send(update, f"Не был в блок-листе: <code>{uid}</code>")
+
+
 def _stats_text() -> str:
     act = store.active_chat_counts()
     site_labels = {
@@ -521,7 +604,12 @@ async def _run_broadcast(
     if not draft:
         await _send(update, "Нет текста для рассылки. /broadcast")
         return
-    chats = store.all_chats()
+    # Skip blocked private users; still allow group chats.
+    chats = [
+        c
+        for c in store.all_chats()
+        if not (c.chat_type == "private" and store.is_blocked(c.chat_id))
+    ]
     ok = 0
     fail = 0
     pay_kb = kb.broadcast_donate_keyboard()
@@ -768,6 +856,55 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 update,
                 _stats_text(),
                 markup=kb.admin_keyboard(),
+                edit=True,
+            )
+            return
+        if action == "blocks":
+            context.user_data.pop("await_block", None)
+            await _send(
+                update,
+                _blocks_text(),
+                markup=kb.blocks_keyboard(store.list_blocked(20)),
+                edit=True,
+            )
+            return
+        if action == "block_add":
+            context.user_data["await_block"] = True
+            await _send(
+                update,
+                "🚫 Пришлите <b>Telegram user id</b> одним сообщением.\n"
+                "Можно с причиной: <code>123456789 спам</code>\n"
+                "Отмена: /admin",
+            )
+            return
+        if action.startswith("unblock:"):
+            uid = int(action.split(":", 1)[1])
+            if store.unblock_user(uid):
+                msg = f"✅ Пользователь <code>{uid}</code> разблокирован."
+            else:
+                msg = f"Не найден в блок-листе: <code>{uid}</code>"
+            await _send(
+                update,
+                msg + "\n\n" + _blocks_text(),
+                markup=kb.blocks_keyboard(store.list_blocked(20)),
+                edit=True,
+            )
+            return
+        if action.startswith("block_info:"):
+            uid = int(action.split(":", 1)[1])
+            items = [x for x in store.list_blocked(200) if x["user_id"] == uid]
+            if not items:
+                await _send(update, "Запись не найдена.", markup=kb.admin_keyboard())
+                return
+            b = items[0]
+            await _send(
+                update,
+                f"🚫 <b>Блок</b>\n"
+                f"User id: <code>{b['user_id']}</code>\n"
+                f"Причина: {b.get('reason') or '—'}\n"
+                f"Кем: <code>{b.get('blocked_by') or '—'}</code>\n"
+                f"Когда: {b.get('blocked_at') or '—'}",
+                markup=kb.blocks_keyboard(store.list_blocked(20)),
                 edit=True,
             )
             return
@@ -1070,8 +1207,40 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = update.message.text.strip()
     chat = ensure(update)
 
-    # Admin broadcast draft
+    # Admin: block by id draft
     user = update.effective_user
+    if (
+        user
+        and user.id in config.ADMIN_IDS
+        and context.user_data.get("await_block")
+    ):
+        context.user_data["await_block"] = False
+        parts = text.split(maxsplit=1)
+        try:
+            uid = int(parts[0].strip())
+        except ValueError:
+            await _send(update, "Нужен числовой Telegram user id.")
+            return
+        if uid in config.ADMIN_IDS:
+            await _send(update, "Нельзя заблокировать администратора бота.")
+            return
+        reason = parts[1].strip() if len(parts) > 1 else ""
+        if store.block_user(uid, reason=reason, blocked_by=user.id):
+            await _send(
+                update,
+                f"🚫 Заблокирован <code>{uid}</code>"
+                + (f"\nПричина: {reason}" if reason else ""),
+                markup=kb.blocks_keyboard(store.list_blocked(20)),
+            )
+        else:
+            await _send(
+                update,
+                f"Уже в блок-листе: <code>{uid}</code>",
+                markup=kb.blocks_keyboard(store.list_blocked(20)),
+            )
+        return
+
+    # Admin broadcast draft
     if (
         user
         and user.id in config.ADMIN_IDS
@@ -1231,6 +1400,8 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("broadcast", cmd_broadcast))
     app.add_handler(CommandHandler("refresh", cmd_refresh))
+    app.add_handler(CommandHandler("block", cmd_block))
+    app.add_handler(CommandHandler("unblock", cmd_unblock))
     app.add_handler(CallbackQueryHandler(on_callback))
     app.add_handler(ChatMemberHandler(on_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))

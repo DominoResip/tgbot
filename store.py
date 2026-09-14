@@ -199,6 +199,16 @@ class Store:
                     ON broadcast_deliveries(broadcast_id)
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS blocked_users (
+                    user_id INTEGER PRIMARY KEY,
+                    reason TEXT DEFAULT '',
+                    blocked_by INTEGER DEFAULT 0,
+                    blocked_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
         log.info("sqlite ready at %s (%s chats)", self.path, self.chat_count())
 
 
@@ -784,6 +794,72 @@ class Store:
                 WHERE broadcast_id = ?
                 """,
                 (int(broadcast_id),),
+            ).fetchone()
+        return int(row["n"] if row else 0)
+
+    # --- user blocks (spam / abuse) ---
+
+    def is_blocked(self, user_id: int) -> bool:
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM blocked_users WHERE user_id = ?",
+                (int(user_id),),
+            ).fetchone()
+        return row is not None
+
+    def block_user(
+        self,
+        user_id: int,
+        *,
+        reason: str = "",
+        blocked_by: int = 0,
+    ) -> bool:
+        """Return True if newly blocked, False if already blocked."""
+        if self.is_blocked(user_id):
+            return False
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO blocked_users (user_id, reason, blocked_by)
+                VALUES (?, ?, ?)
+                """,
+                (int(user_id), (reason or "").strip()[:500], int(blocked_by or 0)),
+            )
+        return True
+
+    def unblock_user(self, user_id: int) -> bool:
+        with self._lock, self._connect() as conn:
+            cur = conn.execute(
+                "DELETE FROM blocked_users WHERE user_id = ?",
+                (int(user_id),),
+            )
+            return int(cur.rowcount or 0) > 0
+
+    def list_blocked(self, limit: int = 50) -> list[dict[str, Any]]:
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT user_id, reason, blocked_by, blocked_at
+                FROM blocked_users
+                ORDER BY blocked_at DESC
+                LIMIT ?
+                """,
+                (int(limit),),
+            ).fetchall()
+        return [
+            {
+                "user_id": int(r["user_id"]),
+                "reason": str(r["reason"] or ""),
+                "blocked_by": int(r["blocked_by"] or 0),
+                "blocked_at": str(r["blocked_at"] or ""),
+            }
+            for r in rows
+        ]
+
+    def blocked_count(self) -> int:
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS n FROM blocked_users"
             ).fetchone()
         return int(row["n"] if row else 0)
 

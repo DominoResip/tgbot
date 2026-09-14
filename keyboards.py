@@ -229,10 +229,34 @@ def admin_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton("📊 Статистика", callback_data="a:stats")],
             [InlineKeyboardButton("📣 Новая рассылка", callback_data="a:broadcast")],
             [InlineKeyboardButton("📋 История рассылок", callback_data="a:bc_list")],
+            [InlineKeyboardButton("🚫 Блокировки", callback_data="a:blocks")],
             [InlineKeyboardButton("🔄 Обновить сайт", callback_data="a:refresh")],
             [InlineKeyboardButton("К меню 🔙", callback_data="m:home")],
         ]
     )
+
+
+def blocks_keyboard(items: list[dict]) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for b in items[:20]:
+        uid = b["user_id"]
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    f"ID {uid}",
+                    callback_data=f"a:block_info:{uid}",
+                ),
+                InlineKeyboardButton(
+                    "✅ Разблок",
+                    callback_data=f"a:unblock:{uid}",
+                ),
+            ]
+        )
+    rows.append(
+        [InlineKeyboardButton("➕ Заблокировать по ID", callback_data="a:block_add")]
+    )
+    rows.append([InlineKeyboardButton("« Админка", callback_data="a:home")])
+    return InlineKeyboardMarkup(rows)
 
 
 def broadcast_confirm_keyboard() -> InlineKeyboardMarkup:
